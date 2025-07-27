@@ -1,0 +1,51 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Log files
+*.log
+logs/
+
+# JSON data files
+*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# TypeScript/JavaScript
+node_modules/
+static/dist/
+*.js.map
+static/app.js
+
+# OS
+.DS_Store
+
+# Testing
+.pytest_cache/
+__pycache__/
+.coverage
+htmlcov/
+test-results/
+playwright-report/
+.playwright/
+
+# Dyl Ignore doxygen files
+html/
+latex/
+
+# Dyl ignore Playwright results
+test-results/
+Playwright-report/
+
+# Dyl ignore .pem self-signed HTTPS certificates
+*.pem
+
+# Include Requirements
+!package.json
+!tsconfig.json
+!requirements.txt
+!package-lock.json

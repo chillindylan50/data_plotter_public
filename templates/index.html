@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <!-- Page metadata and external resource imports -->
+    <title>Data Plotter</title>
+    <link rel="icon" href="{{ url_for('static', filename='epsilon.png') }}" type="image/png">
+    
+    <!-- Import Plotly.js and Google Sign-In -->
+    <script src="https://cdn.plot.ly/plotly-3.0.1.min.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async></script>
+
+    <!-- Link to custom CSS stylesheet -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='app_styles.css') }}">
+    
+    <!-- Import custom JavaScript with defer to ensure DOM is loaded before script runs -->
+    <script src="{{ url_for('static', filename='dist/app.js') }}" defer></script>
+    <script>
+        window.onload = () => {
+            setupDropZone();
+        };
+    </script>
+</head>
+<body ondragover="event.preventDefault();" ondrop="event.preventDefault();">
+    <!-- User Controls -->
+    <div class="user-controls">
+        <span id="user-email"></span>
+        <button id="logout-button" onclick="handleLogout()">Sign Out</button>
+    </div>
+        <div class="container" ondragover="event.preventDefault();" ondrop="event.preventDefault();">
+        <!-- Main page title -->
+        <h1 class="text-center">
+            <img src="{{ url_for('static', filename='epsilon.png') }}" alt="Epsilon" style="height: 1em; vertical-align: middle; margin-right: 0.5em;">
+            Data Plotter
+        </h1>
+        
+        <!-- Main Content Area: Divided into Data Table and Plot sections -->
+        <div class="grid-container">
+            <!-- Data Table -->
+            <div>
+                <h2>Data Table</h2>
+                <!-- CSV Drop Zone -->
+                <div id="dropZone" class="drop-zone">
+                    Drag and drop CSV file here<br>(first column must be Date)
+                </div>
+                <!-- Interactive data table with input row for adding new data points -->
+                <table id="dataTable">
+                    <thead>
+                        <tr>
+                            <!-- Headers will be populated by TypeScript -->
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Input row for adding new data points dynamically -->
+                        <tr class="input-row">
+                            <!-- Input fields will be populated by TypeScript -->
+                        </tr>
+                    </tbody>
+                </table>
+                <!-- Buttons for table manipulation -->
+                <div class="button-group">
+                    <button class="add-button" onclick="addRow()">Add Row</button>
+                    <button class="add-button" onclick="addColumn()">Add Column</button>
+                    <button class="btn" onclick="clearAllData()" style="background-color: #dc3545;">Clear All Data</button>
+                    <button class="btn" onclick="resetTable()" style="background-color: #ffc107;">Reset Whole Table</button>
+                </div>
+            </div>
+            
+            <!-- Plot and Correlation Analysis -->
+            <!-- Using Plotly.js and Flask's jinja templating, which allows Python code to run before rendering the HTML. -->
+            <div>
+                <h2>Plot</h2>
+                <!-- Controls for selecting axes and updating plot -->
+                <div class="plot-controls">
+                    <!-- X-axis row -->
+                    <div class="x-axis-row">
+                        <label for="xAxis">X</label>
+                        <select id="xAxis">
+                            <!-- Options populated by TypeScript -->
+                        </select>
+                    </div>
+                    
+                    <!-- Y-axes row -->
+                    <div class="y-axes-row">
+                        <div class="y-axes">
+                            <div class="y-axis-group">
+                                <label for="yAxis1">Y1</label>
+                                <select id="yAxis1">
+                                    <!-- Options populated by TypeScript -->
+                                </select>
+                            </div>
+                            <div class="y-axis-group">
+                                <label for="yAxis2">Y2</label>
+                                <select id="yAxis2">
+                                    <!-- Options populated by TypeScript -->
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Button row -->
+                    <div class="button-row">
+                        <button onclick="calculateCorrelations()" class="btn" style="background-color: #4CAF50;">Calculate Plotted Correlations</button>
+                    </div>
+                    <!-- Individual correlation results -->
+                    <div id="correlationResults" style="margin: 10px 0; padding: 10px; border-radius: 4px;"></div>
+                </div>
+                <!-- Plot placeholder -->
+                <div id="plot"></div>
+            </div>
+        </div>
+
+        <!-- Correlation Analysis Section -->
+        <div class="correlation-section" style="max-width: 1200px; margin: 20px auto;">
+            <h2 class="section-title">Correlations for all considered variables</h2>
+            <!-- Button row -->
+            <div class="button-row">
+                <button onclick="calculateAllCorrelations()" class="btn" style="background-color: #4CAF50;">Calculate All Correlations</button>
+                <button onclick="clearCorrelationMatrix()" class="btn" style="background-color: #dc3545;">Clear Matrix</button>
+            </div>
+            <!-- Full correlation matrix -->
+            <div id="correlationMatrixContainer" style="width: 100%;">
+                <div id="correlationMatrix" style="width: 100%;"></div>
+            </div>
+        </div>
+
+        <!-- Interpretation Section Container -->
+        <div class="interpretation-section" style="max-width: 900px; margin: 20px auto; padding: 20px; background-color: #f5f5f5; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h2 style="color: #333; margin-bottom: 15px;">Correlation Interpretation</h2>
+            <p>Correlation is a measure of the strength and direction of the relationship between two variables. It ranges from -1 to 1, where:</p>
+            <p> A value of 1 is a perfect positive correlation, meaning increasing the value of one of the parameters is associated with an increase in the value of the other. </p>
+            <p> A value of -1 is a perfect negative correlation, meaning increasing the value of one of the parameters is associated with a decrease in the value of the other. </p>
+            <p> A value of 0 is no correlation. </p>
+
+            <h2 style="color: #333; margin: 20px 0 15px;">Statistical Significance Interpretation</h2>
+            <p>Statistical significance is a measure of the likelihood that a correlation is due to random chance. It ranges from 0 to 1, where:</p>
+            <p> A p-value of less than 0.05 is considered statistically significant, meaning there is a less than 5% chance that the correlation is due to random chance. Consider acting upon or reflecting upon the validity of the observed correlation in these cases. </p>
+            <p> A p-value of greater than 0.05 is considered not statistically significant, meaning there is a greater than 5% chance that the correlation is due to random chance. Generally the variables you are considering are not related in reality.</p>
+        </div>
+    </div>
+
+    <!-- Footer with navigation and external links -->
+    <div class="button-group">
+        <!-- Home link using Flask's url_for to generate correct URL -->
+        <!-- <a href="{{ url_for('index') }}" class="btn"><i class="fas fa-home"></i>Go Home</a> -->
+        <a href="https://dylanshah.com" class="btn"><i class="fas fa-home"></i>DylanShah.com</a>
+    </div>
+</body>
+</html>

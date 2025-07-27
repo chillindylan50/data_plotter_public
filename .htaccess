@@ -1,0 +1,6 @@
+PassengerEnabled On
+PassengerPython /home/dylatktq/virtualenv/public_html/playground/windsurf_app/3.13/bin/python
+
+# Set environment variables
+SetEnv PYTHONPATH /home/dylatktq/public_html/playground/windsurf_app
+SetEnv FLASK_ENV production

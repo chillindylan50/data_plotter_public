@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Data Plotter</title>
+    <script src="https://accounts.google.com/gsi/client" async></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='app_styles.css') }}">
+    <style>
+        .login-container {
+            max-width: 400px;
+            margin: 100px auto;
+            padding: 20px;
+            text-align: center;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .error {
+            color: red;
+            margin-top: 10px;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+    <script>
+        function handleCredentialResponse(response) {
+            fetch('/verify-google-token', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    token: response.credential
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = '/';
+                } else {
+                    const errorDiv = document.getElementById('error-message');
+                    errorDiv.textContent = data.error || 'Authentication failed';
+                    errorDiv.classList.remove('hidden');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                const errorDiv = document.getElementById('error-message');
+                errorDiv.textContent = 'An error occurred during authentication';
+                errorDiv.classList.remove('hidden');
+            });
+        }
+    </script>
+</head>
+<body>
+    <div class="login-container">
+        <h1>Welcome to Data Plotter</h1>
+        <p>Please sign in to continue:</p>
+        <div id="g_id_onload"
+             data-client_id="112823592369-rus56tq2c3jii5vdac91pca2lkn1dll1.apps.googleusercontent.com"
+             data-callback="handleCredentialResponse"
+             data-auto_prompt="false">
+        </div>
+        <div class="g_id_signin"
+             data-type="standard"
+             data-size="large"
+             data-theme="outline"
+             data-text="sign_in_with"
+             data-shape="rectangular"
+             data-logo_alignment="left">
+        </div>
+        <div id="error-message" class="error hidden"></div>
+    </div>
+</body>
+</html>

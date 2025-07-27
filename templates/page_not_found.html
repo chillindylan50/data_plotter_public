@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Page Not Found</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='app_styles.css') }}">
+</head>
+<body>
+    <div class="container center-content">
+        <h1 class="error-code">404</h1>
+        <div class="emoji">🤔</div>
+        <h2>Page Not Found</h2>
+        <p>Oops! The page you're looking for seems to have gone on vacation. Maybe try checking the URL or heading back home?</p>
+        <div class="button-group">
+            <a href="{{ url_for('index') }}" class="btn"><i class="fas fa-home"></i> Go Home</a>
+            <a href="https://dylanshah.com" class="btn" style="background-color: #00356B;">Visit Dylan's Website</a>
+        </div>
+    </div>
+</body>
+</html>

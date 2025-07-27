@@ -1,0 +1,21 @@
+{
+  "name": "data-table-plotter",
+  "version": "1.0.0",
+  "description": "Data table plotter with TypeScript",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.0",
+    "@types/plotly.js": "^2.12.30",
+    "typescript": "^5.3.3"
+  },
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
