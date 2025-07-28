@@ -26,7 +26,11 @@
     </style>
     <script>
         function handleCredentialResponse(response) {
-            fetch('/verify-google-token', {
+            // Get base URL from current path (handles /epsilon in production)
+            const path = window.location.pathname;
+            const baseUrl = path.substring(0, path.lastIndexOf('/') + 1);
+            
+            fetch(baseUrl + 'verify-google-token', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -38,7 +42,7 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    window.location.href = '/';
+                    window.location.href = baseUrl;
                 } else {
                     const errorDiv = document.getElementById('error-message');
                     errorDiv.textContent = data.error || 'Authentication failed';

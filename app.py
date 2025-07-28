@@ -27,6 +27,17 @@ app = Flask(__name__)
 # Configure Flask app with secure secret key
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', os.urandom(32).hex())
 
+# Configure paths based on environment
+if os.getenv('FLASK_ENV') == 'production':
+    app.config['APPLICATION_ROOT'] = '/epsilon'
+    app.static_url_path = '/epsilon/static'
+    # Ensure all routes work with the subdirectory
+    app.config['APPLICATION_ROOT'] = '/epsilon'
+    app.url_map.strict_slashes = False
+else:
+    # Local development uses default paths
+    app.debug = True
+
 # Configure logging
 app_dir = os.path.dirname(os.path.abspath(__file__))
 log_dir = os.path.join(app_dir, 'logs')
@@ -89,6 +100,7 @@ def load_user(user_id):
 
 # Authentication routes
 @app.route('/auth-status')
+@app.route('/epsilon/auth-status')
 def auth_status():
     """Get current authentication status.
     
@@ -103,6 +115,7 @@ def auth_status():
     return jsonify({'authenticated': False})
 
 @app.route('/verify-google-token', methods=['POST'])
+@app.route('/epsilon/verify-google-token', methods=['POST'])
 def verify_google_token():
     try:
         token = request.json.get('token')
@@ -140,6 +153,7 @@ def verify_google_token():
         return jsonify({'success': False, 'error': 'Authentication failed'}), 500
 
 @app.route('/logout', methods=['POST'])
+@app.route('/epsilon/logout', methods=['POST'])
 def logout():
     try:
         if current_user.is_authenticated:
@@ -317,6 +331,10 @@ def index() -> str:
         authenticated=current_user.is_authenticated
     )
 
+# @app.route('/')
+# def hello():
+#     return 'Hello! If you see this, Flask is working.'
+
 ## Data Handlers
 @app.route('/add_row', methods=['POST'])
 def add_row() -> tuple[dict, int]:
@@ -342,6 +360,7 @@ def add_row() -> tuple[dict, int]:
     return jsonify({"status": "success"}), 200
 
 @app.route('/get_data', methods=['GET'])
+@app.route('/epsilon/get_data', methods=['GET'])
 def get_data() -> tuple[list, int]:
     """Get all data points with column headers.
 
@@ -524,6 +543,7 @@ def interpret_correlation(correlation: float, p_value: float, x_display: str, y_
 
 # CSV Import
 @app.route('/import_csv', methods=['POST'])
+@app.route('/epsilon/import_csv', methods=['POST'])
 def import_csv():
     """Import data from CSV file.
     

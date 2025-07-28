@@ -1,6 +1,17 @@
-PassengerEnabled On
-PassengerPython /home/dylatktq/virtualenv/public_html/playground/windsurf_app/3.13/bin/python
 
 # Set environment variables
-SetEnv PYTHONPATH /home/dylatktq/public_html/playground/windsurf_app
+SetEnv PYTHONPATH /home/dylatktq/epsilon
 SetEnv FLASK_ENV production
+SetEnv FLASK_DEBUG 1  # Enable debug output temporarily
+
+# Handle subdirectory routing
+RewriteEngine On
+RewriteBase /epsilon
+RewriteRule ^(.*)$ passenger_wsgi.py/$1 [QSA,L]
+
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
+PassengerEnabled On
+PassengerPython /home/dylatktq/virtualenv/epsilon/3.13/bin/python
+PassengerAppRoot "/home/dylatktq/epsilon"
+PassengerBaseURI "/epsilon"
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END

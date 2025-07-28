@@ -1,11 +1,11 @@
 # Data Table Plotter
 
-An interactive web application for data visualization and statistical analysis. Create, edit, and visualize data tables with real-time plotting and correlation analysis capabilities. Note: this version was made using Windsurf, as a first example web app I built. I'll upload it to dylanshah.com once I'm sure the code is secure.
+An interactive web application for data visualization and statistical analysis. Create, edit, and visualize data tables with real-time plotting and correlation analysis capabilities. Note: this version was made using Windsurf, as a first example web app I built. It's running live at dylanshah.com/epsilon. Hopefully with no security leaks :smile:.
 
 ## Features
 
 - **Interactive Data Table**
-  - Add/edit data directly in the browser
+  - Add/edit data directly in the browser 
   - Import data from CSV files via drag-and-drop
   - First column is always a date field for time-series analysis
   - Add/remove rows and columns dynamically
