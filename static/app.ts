@@ -1070,8 +1070,10 @@ function setupDropZone(): void {
 
         dropZone.addEventListener('drop', async (e) => {
             const file = (e as DragEvent).dataTransfer?.files[0];
-            if (!file || !file.name.endsWith('.csv')) {
-                alert('Please upload a CSV file');
+            const allowedExtensions = ['.csv', '.xlsx', '.xls'];
+            const fileExt = file?.name.toLowerCase().match(/\.[^.]*$/)?.[0] || '';
+            if (!file || !allowedExtensions.some(ext => fileExt === ext)) {
+                alert('Please upload a CSV or Excel file (.csv, .xlsx, .xls)');
                 return;
             }
             
@@ -1079,7 +1081,7 @@ function setupDropZone(): void {
             formData.append('file', file);
             
             try {
-                const response = await fetch(baseUrl + 'import_csv', {
+                const response = await fetch(baseUrl + 'import_datafile', {
                     method: 'POST',
                     body: formData
                 });

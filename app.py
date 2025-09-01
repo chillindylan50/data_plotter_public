@@ -331,10 +331,6 @@ def index() -> str:
         authenticated=current_user.is_authenticated
     )
 
-# @app.route('/')
-# def hello():
-#     return 'Hello! If you see this, Flask is working.'
-
 ## Data Handlers
 @app.route('/add_row', methods=['POST'])
 def add_row() -> tuple[dict, int]:
@@ -542,12 +538,12 @@ def interpret_correlation(correlation: float, p_value: float, x_display: str, y_
     return f"There is a {strength} {direction} correlation between {x_display} and {y_display} (correlation = {correlation:.3f}). This is statistically {significance} (p = {p_value:.3f})."
 
 # CSV Import
-@app.route('/import_csv', methods=['POST'])
-@app.route('/epsilon/import_csv', methods=['POST'])
-def import_csv():
-    """Import data from CSV file.
+@app.route('/import_datafile', methods=['POST'])
+@app.route('/epsilon/import_datafile', methods=['POST'])
+def import_datafile():
+    """Import data from CSV or Excel file.
     
-    Expects a CSV file with the first column containing dates.
+    Expects a CSV or Excel file with the first column containing dates.
     Returns:
         A tuple containing success/error message and HTTP status code.
     """
@@ -555,12 +551,17 @@ def import_csv():
         return jsonify({'error': 'No file uploaded'}), 400
         
     file = request.files['file']
-    if not file.filename.endswith('.csv'):
-        return jsonify({'error': 'File must be a CSV'}), 400
+    # Check file extension
+    filename = file.filename.lower()
+    if not any(filename.endswith(ext) for ext in ['.csv', '.xlsx', '.xls']):
+        return jsonify({'error': 'File must be CSV or Excel (.csv, .xlsx, .xls)'}), 400
         
     try:
-        # Read CSV into pandas DataFrame, handle extra commas and spaces
-        df = pd.read_csv(file, skipinitialspace=True)
+        # Read file into pandas DataFrame based on extension
+        if filename.endswith('.csv'):
+            df = pd.read_csv(file, skipinitialspace=True)
+        else:  # Excel files
+            df = pd.read_excel(file)
         
         # Check if we have any data
         if df.empty:

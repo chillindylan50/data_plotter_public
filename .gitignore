@@ -44,6 +44,10 @@ Playwright-report/
 # Dyl ignore .pem self-signed HTTPS certificates
 *.pem
 
+# Dyl by default, ignore .csv and .xlsx
+*.csv
+*.xlsx
+
 # Include Requirements
 !package.json
 !tsconfig.json
