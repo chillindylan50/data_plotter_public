@@ -48,7 +48,10 @@ Playwright-report/
 *.csv
 *.xlsx
 
-# Include Requirements
+# Dyl ignore anything we throw in Archive
+Archive/
+
+# Include Requirements and environment configuration
 !package.json
 !tsconfig.json
 !requirements.txt

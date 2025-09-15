@@ -9,23 +9,50 @@ from datetime import date
 import json
 import logging
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv # Load key-value environment variables from a .env file
 
 # Load environment variables
 load_dotenv()
 
 from flask import Flask, jsonify, render_template, request, session, redirect, url_for
-from flask_login import LoginManager, UserMixin, current_user, login_user, logout_user
+from flask_login import LoginManager, current_user, login_user, logout_user
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 import pandas as pd
 from scipy import stats
+
+# Import database components. These are in a custom database.py file, built using SQLAlchemy and Flask-SQLAlchemy on top of SQLite
+from models import db, User
+from database import (
+    ensure_user_exists, load_user_data, save_user_data, 
+    add_data_point, clear_user_data
+)
 
 # Initialize Flask app
 app = Flask(__name__)
 
 # Configure Flask app with secure secret key
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', os.urandom(32).hex())
+
+# Configure database, using SQLAlchemy as the abstraction layer to talk to the sqlite database
+# SQLAlchemy is a SQL toolkit and Object-Relational Mapping (ORM) system for Python. Converts Python into SQL commands
+# In models.py, we use the Flask implementation of SQLAlchemy... using Python's built-in sqlite3 module
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
+    'DATABASE_URL', 
+    f'sqlite:///{os.path.join(os.path.dirname(os.path.abspath(__file__)), "instance", "user_data.db")}'
+)
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize database
+db.init_app(app)
+
+# Create database tables when app starts
+def create_tables():
+    with app.app_context():
+        db.create_all()
+
+# Call create_tables after app initialization
+create_tables()
 
 # Configure paths based on environment
 if os.getenv('FLASK_ENV') == 'production':
@@ -86,16 +113,10 @@ except Exception as e:
 login_manager = LoginManager()
 login_manager.init_app(app)
 
-# User class for Flask-Login
-class User(UserMixin):
-    def __init__(self, user_id, email):
-        self.id = user_id
-        self.email = email
-
 @login_manager.user_loader
 def load_user(user_id):
     if 'user_email' in session:
-        return User(user_id, session['user_email'])
+        return User.query.get(user_id)
     return None
 
 # Authentication routes
@@ -134,7 +155,10 @@ def verify_google_token():
         user_id = idinfo['sub']
         email = idinfo['email']
         
-        user = User(user_id, email)
+        # Ensure user exists in database
+        ensure_user_exists(user_id, email)
+        
+        user = User.query.get(user_id)
         login_user(user)
         session['user_email'] = email
         
@@ -164,141 +188,6 @@ def logout():
         logger.error(f'Logout error: {str(e)}')
         return jsonify({'success': False, 'error': 'Logout failed'}), 500
 
-# Configure user data storage paths
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'user_data')
-
-def get_user_data_path(user_id: str) -> str:
-    """Get path to user-specific data file.
-    
-    Args:
-        user_id: The user's ID to create path for.
-        
-    Returns:
-        Path to the CSV data file
-    """
-    user_dir = os.path.join(DATA_DIR, user_id)
-    os.makedirs(user_dir, exist_ok=True)
-    logger.info(f'Loading data for user {user_id} at user_dir {user_dir}')
-    
-    data_path = os.path.join(user_dir, 'data.csv')
-    
-    # Initialize file if it doesn't exist
-    if not os.path.exists(data_path):
-        # Create empty DataFrame with default columns
-        df = pd.DataFrame(columns=['Date', 'Variable 1', 'Variable 2'])
-        df.to_csv(data_path, index=False)
-        os.chmod(data_path, 0o664)
-    
-    return data_path
-
-# Initialize data files if they don't exist and ensure proper permissions
-def ensure_file_exists(file_path: str) -> None:
-    """Ensure file exists with proper permissions.
-    
-    Creates the file if it doesn't exist and sets appropriate permissions.
-    Also creates parent directories if they don't exist.
-    """
-    try:
-        # Create parent directory if it doesn't exist
-        directory = os.path.dirname(file_path)
-        if not os.path.exists(directory):
-            os.makedirs(directory, mode=0o755)
-            logger.info(f'Created directory: {directory}')
-        
-        # Create file if it doesn't exist
-        if not os.path.exists(file_path):
-            with open(file_path, 'w') as f:
-                json.dump({}, f)
-            logger.info(f'Created file: {file_path}')
-        
-        # Set permissions - 664 allows group write access which is often needed on shared hosting
-        os.chmod(file_path, 0o664)
-        os.chmod(directory, 0o755)
-        logger.info(f'Set permissions for {file_path}')
-    except Exception as e:
-        logger.error(f'Error ensuring file exists: {str(e)}')
-        raise
-
-# Initialize user data directory with proper permissions
-os.makedirs(DATA_DIR, mode=0o755, exist_ok=True)
-os.chmod(DATA_DIR, 0o755)  # Ensure directory is readable
-
-def load_user_data(user_id: str) -> list:
-    """Load data from CSV for a specific user.
-
-    Args:
-        user_id: The user's ID to load data for.
-
-    Returns:
-        List of dictionaries containing the data, with column names as keys.
-        Returns empty list if file doesn't exist.
-    """
-    data_path = get_user_data_path(user_id)
-    
-    try:
-        # Read CSV into DataFrame, ensuring Date is first column
-        df = pd.read_csv(data_path)
-        # Reorder columns to ensure Date is first
-        cols = ['Date'] + [col for col in df.columns if col != 'Date']
-        df = df[cols]
-        # Convert DataFrame to list of dictionaries
-        data = df.to_dict('records')
-    except Exception as e:
-        logger.error(f'Error loading data for user {user_id}: {str(e)}')
-        # Create empty DataFrame with default columns
-        df = pd.DataFrame(columns=['Date', 'Variable 1', 'Variable 2'])
-        data = []
-    
-    return data
-
-def save_user_data(user_id: str, data: list, reset: bool = False) -> None:
-    """Save data for a specific user to CSV.
-
-    Args:
-        user_id: The user's ID to save data for.
-        data: A list of dictionaries containing data points to save.
-    """
-    data_path = get_user_data_path(user_id)
-    logger.info(f'Saving data for user {user_id} to {data_path}')
-    
-    try:
-        # Convert data to DataFrame
-        if data:
-            df = pd.DataFrame(data)
-        else:
-            # Load existing data to get columns (if any)
-            existing_data = load_user_data(user_id)
-            if existing_data and not reset:
-                # Use existing columns
-                df = pd.DataFrame(columns=pd.DataFrame(existing_data).columns)
-            else:
-                # Create empty DataFrame with default columns
-                df = pd.DataFrame(columns=['Date', 'Variable 1', 'Variable 2'])
-        
-        # Ensure Date is first column if we have columns
-        if not df.empty or len(df.columns) > 0:
-            cols = ['Date'] + [col for col in df.columns if col != 'Date']
-            df = df[cols]
-        
-        # Ensure parent directory exists
-        parent_dir = os.path.dirname(data_path)
-        os.makedirs(parent_dir, exist_ok=True)
-        
-        # Save to temporary CSV first
-        temp_data_path = f'{data_path}.tmp'
-        df.to_csv(temp_data_path, index=False)
-        os.chmod(temp_data_path, 0o664)
-        os.rename(temp_data_path, data_path)
-        
-    except Exception as e:
-        logger.error(f'Error saving data for user {user_id}: {str(e)}')
-        # Clean up temp file if it exists
-        if os.path.exists(temp_data_path):
-            try:
-                os.remove(temp_data_path)
-            except:
-                pass
-        raise
 
 
 
@@ -345,15 +234,14 @@ def add_row() -> tuple[dict, int]:
     new_row = request.json
     logger.info(f'Adding new row to data: {new_row}')
     
-    # Load user's current data
-    user_data = load_user_data(current_user.id)
-    user_data.append(new_row)
-    
-    # Save updated data
-    save_user_data(current_user.id, user_data)
-    logger.info(f'Current data after adding row: {user_data}')
-    
-    return jsonify({"status": "success"}), 200
+    try:
+        # Add single data point using database function
+        add_data_point(current_user.id, new_row)
+        logger.info(f'Successfully added data point for user {current_user.id}')
+        return jsonify({"status": "success"}), 200
+    except Exception as e:
+        logger.error(f'Error adding data point: {str(e)}')
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/get_data', methods=['GET'])
 @app.route('/epsilon/get_data', methods=['GET'])
@@ -369,7 +257,7 @@ def get_data() -> tuple[list, int]:
     
     try:
         user_data = load_user_data(current_user.id)
-        logger.info(f'Sending data to client for user {current_user.id}: {user_data}')
+        logger.info(f'Sending data to client for user {current_user.id}: {len(user_data)} points')
         return jsonify(user_data), 200
     except Exception as e:
         logger.error(f'Error loading data for user {current_user.id}: {str(e)}')
@@ -387,15 +275,15 @@ def replace_data() -> tuple[dict, int]:
     
     try:
         new_data = request.json
-        logger.info(f'Received data to replace: {new_data}')
+        logger.info(f'Received data to replace: {len(new_data)} points')
         
         # Validate data structure
         if not isinstance(new_data, list):
             logger.error(f'Invalid data format received: {type(new_data)}')
             return jsonify({"status": "error", "message": "Data must be a list"}), 400
         
-        # Replace all data
-        save_user_data(current_user.id, new_data)
+        # Replace all data using database function
+        save_user_data(current_user.id, new_data, reset=False)
         logger.info(f'Successfully replaced data for user {current_user.id} with {len(new_data)} rows')
         
         return jsonify({"status": "success"}), 200
@@ -415,8 +303,8 @@ def clear_data() -> tuple[dict, int]:
         return jsonify({"status": "error", "message": "Not authenticated"}), 401
     
     try:
-        # Save empty data - save_user_data will preserve column structure
-        save_user_data(current_user.id, [])
+        # Clear all user data using database function
+        clear_user_data(current_user.id)
         return jsonify({"status": "success"}), 200
     except Exception as e:
         logger.error(f'Error clearing data for user {current_user.id}: {str(e)}')
@@ -436,7 +324,7 @@ def reset_table() -> tuple[dict, int]:
         return jsonify({"status": "error", "message": "Not authenticated"}), 401
     
     try:
-        # Reset to empty data with no rows
+        # Reset to empty data using database function
         save_user_data(current_user.id, [], reset=True)
         
         return jsonify({"status": "success"}), 200
