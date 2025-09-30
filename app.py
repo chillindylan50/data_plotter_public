@@ -6,27 +6,32 @@ interactive plotting capabilities.
 """
 
 from datetime import date
-import json
-import logging
 import os
-from dotenv import load_dotenv # Load key-value environment variables from a .env file
-
-# Load environment variables
-load_dotenv()
-
-from flask import Flask, jsonify, render_template, request, session, redirect, url_for
-from flask_login import LoginManager, current_user, login_user, logout_user
-from google.oauth2 import id_token
-from google.auth.transport import requests as google_requests
+import logging
+import unicodedata
+import re
+import sys
+from datetime import datetime
+from typing import Dict, List, Any, Optional, Union
 import pandas as pd
 from scipy import stats
+import hashlib
+import openai
 
-# Import database components. These are in a custom database.py file, built using SQLAlchemy and Flask-SQLAlchemy on top of SQLite
-from models import db, User
-from database import (
-    ensure_user_exists, load_user_data, save_user_data, 
-    add_data_point, clear_user_data
-)
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from google.oauth2 import id_token
+from google.auth.transport import requests
+from dotenv import load_dotenv
+
+from models import db, User, DataPoint, ChatSession, ChatMessage, CorrelationResult
+from database import (load_user_data, save_user_data, add_data_point, clear_user_data, 
+                     calculate_correlations, get_all_correlations, get_top_correlations)
+
+# Load environment variables from .env file (development only)
+# In production (cPanel), use the Python App environment variables instead
+if os.getenv('FLASK_ENV') != 'production':
+    load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -76,10 +81,10 @@ if not os.path.exists(log_dir):
         log_dir = app_dir
         print(f'Could not create logs directory: {str(e)}. Logging to app directory instead.')
 
-log_file = os.path.join(log_dir, 'app.log')
+log_file = os.path.join(log_dir, 'app.log') # Dyl: Log file path
 try:
-    # Set up file handler
-    file_handler = logging.FileHandler(log_file)
+    # Set up file handler with UTF-8 encoding
+    file_handler = logging.FileHandler(log_file, encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     
@@ -119,6 +124,31 @@ def load_user(user_id):
         return User.query.get(user_id)
     return None
 
+def ensure_user_exists(user_id: str, email: str) -> None:
+    """Ensure user exists in database, create if not found.
+    
+    Args:
+        user_id: Google user ID
+        email: User email address
+    """
+    user = User.query.get(user_id)
+    if not user:
+        user = User(
+            id=user_id,
+            email=email,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db.session.add(user)
+        db.session.commit()
+        logger.info(f'Created new user: {email} ({user_id})')
+    else:
+        # Update email and timestamp if user exists
+        user.email = email
+        user.updated_at = datetime.utcnow()
+        db.session.commit()
+        logger.info(f'Updated existing user: {email} ({user_id})')
+
 # Authentication routes
 @app.route('/auth-status')
 @app.route('/epsilon/auth-status')
@@ -145,7 +175,7 @@ def verify_google_token():
 
         idinfo = id_token.verify_oauth2_token(
             token,
-            google_requests.Request(),
+            requests.Request(),
             os.getenv('GOOGLE_CLIENT_ID')
         )
         
@@ -202,7 +232,7 @@ def login():
     """
     if current_user.is_authenticated:
         return redirect(url_for('index'))
-    return render_template('login.html')
+    return render_template('login.html', google_client_id=os.getenv('GOOGLE_CLIENT_ID'))
 
 @app.route('/')
 def index() -> str:
@@ -238,6 +268,13 @@ def add_row() -> tuple[dict, int]:
         # Add single data point using database function
         add_data_point(current_user.id, new_row)
         logger.info(f'Successfully added data point for user {current_user.id}')
+        
+        # Recalculate correlations after data change
+        try:
+            calculate_correlations(current_user.id)
+        except Exception as corr_error:
+            logger.warning(f'Failed to recalculate correlations: {str(corr_error)}')
+        
         return jsonify({"status": "success"}), 200
     except Exception as e:
         logger.error(f'Error adding data point: {str(e)}')
@@ -285,6 +322,12 @@ def replace_data() -> tuple[dict, int]:
         # Replace all data using database function
         save_user_data(current_user.id, new_data, reset=False)
         logger.info(f'Successfully replaced data for user {current_user.id} with {len(new_data)} rows')
+        
+        # Recalculate correlations after data change
+        try:
+            calculate_correlations(current_user.id)
+        except Exception as corr_error:
+            logger.warning(f'Failed to recalculate correlations: {str(corr_error)}')
         
         return jsonify({"status": "success"}), 200
         
@@ -425,6 +468,47 @@ def interpret_correlation(correlation: float, p_value: float, x_display: str, y_
     
     return f"There is a {strength} {direction} correlation between {x_display} and {y_display} (correlation = {correlation:.3f}). This is statistically {significance} (p = {p_value:.3f})."
 
+"""
+Minimal text sanitizer for chat content.
+- Normalize to NFKC
+- Strip nulls, CR, Unicode line/paragraph separators, and other control chars (but keep \n and \t)
+"""
+_CTRL = ''.join(ch for ch in map(chr, range(32)) if ch not in ('\t', '\n'))
+_CTRL += ''.join(map(chr, range(127, 160)))
+_CTRL_RE = re.compile(f'[{re.escape(_CTRL)}]')
+
+def clean_text(s: str) -> str:
+    if not isinstance(s, str):
+        s = str(s)
+    s = unicodedata.normalize('NFKC', s)
+    s = (s.replace('\x00', '')
+           .replace('\r', '')
+           .replace('\u2028', '')
+           .replace('\u2029', ''))
+    s = _CTRL_RE.sub('', s)
+    return s
+
+def transport_sanitize_text(s: str) -> str:
+    """Make text ASCII-safe for transport if the environment forces ASCII.
+
+    This function is ONLY used when calling the OpenAI HTTP client to avoid
+    'ascii' codec errors in constrained environments. It preserves content
+    best-effort by removing only non-ASCII bytes if required.
+    """
+    if not isinstance(s, str):
+        s = str(s)
+    # First, run the minimal cleaner to strip control characters
+    s = clean_text(s)
+    try:
+        # If environment supports UTF-8 properly, this is a no-op path
+        s.encode('utf-8')
+        return s
+    except Exception:
+        # As a defensive measure; not expected to trigger
+        pass
+    # Ensure ASCII-only as a last resort for HTTP serialization layers that force ASCII
+    return s.encode('ascii', 'ignore').decode('ascii')
+
 # CSV Import
 @app.route('/import_datafile', methods=['POST'])
 @app.route('/epsilon/import_datafile', methods=['POST'])
@@ -482,6 +566,12 @@ def import_datafile():
         # Save user's data
         save_user_data(current_user.id, new_data)
         
+        # Recalculate correlations after data import
+        try:
+            calculate_correlations(current_user.id)
+        except Exception as corr_error:
+            logger.warning(f'Failed to recalculate correlations: {str(corr_error)}')
+        
         return jsonify({
             'success': True,
             'message': f'Successfully imported {len(new_data)} rows',
@@ -491,6 +581,310 @@ def import_datafile():
     except Exception as e:
         logger.error(f'Error importing CSV: {str(e)}')
         return jsonify({'error': f'Error processing CSV: {str(e)}'}), 400
+
+
+# Correlation API Routes
+@app.route('/api/correlations/calculate', methods=['POST'])
+def calculate_user_correlations():
+    """Calculate and store all correlations for the current user."""
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    try:
+        calculate_correlations(current_user.id)
+        return jsonify({
+            'success': True,
+            'message': 'Correlations calculated successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f'Error calculating correlations: {str(e)}')
+        return jsonify({'error': 'Failed to calculate correlations'}), 500
+
+
+@app.route('/api/correlations/all', methods=['GET'])
+def get_all_correlations_endpoint():
+    """Get all stored correlations for the current user."""
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    try:
+        correlations = get_all_correlations(current_user.id)
+        return jsonify({
+            'correlations': correlations,
+            'count': len(correlations)
+        })
+        
+    except Exception as e:
+        logger.error(f'Error getting correlations: {str(e)}')
+        return jsonify({'error': 'Failed to get correlations'}), 500
+
+
+@app.route('/api/correlations/top', methods=['GET'])
+def get_top_user_correlations():
+    """Get top N correlations for the current user."""
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    try:
+        count = request.args.get('count', 3, type=int)
+        correlations = get_top_correlations(current_user.id, count)
+        return jsonify({
+            'correlations': correlations,
+            'count': len(correlations)
+        })
+        
+    except Exception as e:
+        logger.error(f'Error getting top correlations: {str(e)}')
+        return jsonify({'error': 'Failed to get top correlations'}), 500
+
+
+# Chat API Routes
+@app.route('/api/chat/initialize', methods=['POST'])
+def initialize_chat():
+    """Initialize chat session with API key."""
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    try:
+        data = request.json
+        api_key = data.get('api_key')
+        
+        if not api_key:
+            return jsonify({'error': 'API key required'}), 400
+        
+        # Store API key in session (temporary solution)
+        session['openai_api_key'] = api_key
+        
+        # Hash the API key for storage
+        api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        
+        # Create or get existing chat session
+        chat_session = ChatSession.query.filter_by(user_id=current_user.id).first()
+        if not chat_session:
+            chat_session = ChatSession(
+                user_id=current_user.id,
+                api_key_hash=api_key_hash,
+                created_at=datetime.utcnow()
+            )
+            db.session.add(chat_session)
+        else:
+            chat_session.api_key_hash = api_key_hash
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'session_id': chat_session.id
+        })
+        
+    except Exception as e:
+        logger.error(f'Error initializing chat: {str(e)}')
+        return jsonify({'error': 'Failed to initialize chat'}), 500
+
+
+@app.route('/api/chat/send', methods=['POST'])
+def send_chat_message():
+    """Send message to ChatGPT with correlation context."""
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    try:
+        data = request.json
+        message = data.get('message')
+        session_id = data.get('session_id')
+        
+        if not message or not session_id:
+            return jsonify({'error': 'Message and session_id required'}), 400
+        
+        # Get chat session and API key
+        chat_session = ChatSession.query.filter_by(
+            id=session_id, 
+            user_id=current_user.id
+        ).first()
+        
+        if not chat_session:
+            return jsonify({'error': 'Invalid session'}), 400
+        
+        # Get top 3 correlations for context
+        top_correlations = get_top_correlations(current_user.id, count=3)
+        
+        # Format correlation context
+        correlation_context = ""
+        if top_correlations:
+            correlation_context = "\n\nCurrent data correlations context:\n"
+            for i, corr in enumerate(top_correlations, 1):
+                correlation_context += f"{i}. {corr['variable1']} and {corr['variable2']}: r = {corr['correlation']:.3f} (p = {corr['p_value']:.3f})\n"
+        
+        # Create system message with correlation context
+        system_message = f"""You are a helpful AI assistant analyzing personal data patterns. The user is tracking various personal metrics over time. The main three correlations we have found are: {correlation_context}. Please provide insights based on these correlations and answer the user's questions about their data patterns. Focus on practical, actionable advice while being supportive and encouraging."""
+        
+        # Set up OpenAI client with user's API key
+        # Note: In production, we should decrypt the stored API key
+        # For now, we'll need to store the actual key temporarily in session
+        api_key = session.get('openai_api_key')
+        if not api_key:
+            return jsonify({'error': 'API key not found in session'}), 400
+        
+        try:
+            # Alternative approach: use httpx client with no proxy support
+            import httpx
+            
+            # Create a custom httpx client that explicitly disables proxies and forces UTF-8
+            http_client = httpx.Client(
+                proxies=None,
+                headers={
+                    'Accept-Charset': 'utf-8',
+                    'Content-Type': 'application/json; charset=utf-8',
+                    'Accept': 'application/json'
+                },
+                timeout=30.0,
+            )
+            
+            client = openai.OpenAI(
+                api_key=api_key,
+                http_client=http_client
+            )
+            logger.info(f'OpenAI client created successfully for user {current_user.email}')
+        except Exception as client_error:
+            logger.error(f'Error creating OpenAI client: {str(client_error)}')
+            return jsonify({'error': f'Failed to initialize OpenAI client: {str(client_error)}'}), 500
+        
+        # Get recent chat history for context
+        recent_messages = ChatMessage.query.filter_by(
+            session_id=session_id
+        ).order_by(ChatMessage.timestamp.desc()).limit(10).all()
+        
+        # Build conversation history (sanitize and avoid logging raw content)
+        system_message = clean_text(system_message)
+        messages = [{"role": "system", "content": system_message}]
+        try:
+            logger.info('Preparing messages for chat (system+history+user)')
+        except Exception:
+            pass
+
+        # Add recent messages in chronological order
+        for msg in reversed(recent_messages):
+            messages.append({"role": msg.role, "content": clean_text(msg.content)})
+        
+        # Add current user message
+        messages.append({"role": "user", "content": clean_text(message)})
+
+        # Send to OpenAI (single call)
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=messages,
+            max_completion_tokens=500,
+            temperature=0.7
+        )
+        assistant_response = response.choices[0].message.content
+        
+        # Save user message
+        user_message = ChatMessage(
+            session_id=session_id,
+            role='user',
+            content=clean_text(message),
+            timestamp=datetime.utcnow()
+        )
+        db.session.add(user_message)
+        
+        # Save assistant response
+        assistant_message = ChatMessage(
+            session_id=session_id,
+            role='assistant',
+            content=clean_text(assistant_response),
+            timestamp=datetime.utcnow()
+        )
+        db.session.add(assistant_message)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'response': assistant_response,
+            'correlations_included': bool(top_correlations)
+        })
+        
+    except Exception as e:
+        logger.error(f'Error sending chat message: {str(e)}')
+        return jsonify({'error': f'Failed to send message: {str(e)}'}), 500
+
+
+@app.route('/api/chat/history', methods=['GET'])
+def get_chat_history():
+    """Get chat history for current user."""
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    try:
+        # Get chat session for user
+        chat_session = ChatSession.query.filter_by(user_id=current_user.id).first()
+        
+        if not chat_session:
+            return jsonify({
+                'messages': [],
+                'session_id': None
+            })
+        
+        # Get all messages for this session
+        messages = ChatMessage.query.filter_by(
+            session_id=chat_session.id
+        ).order_by(ChatMessage.timestamp.asc()).all()
+        
+        # Format messages for frontend
+        formatted_messages = []
+        for msg in messages:
+            formatted_messages.append({
+                'role': msg.role,
+                'content': msg.content,
+                'timestamp': msg.timestamp.isoformat()
+            })
+        
+        return jsonify({
+            'messages': formatted_messages,
+            'session_id': chat_session.id
+        })
+        
+    except Exception as e:
+        logger.error(f'Error getting chat history: {str(e)}')
+        return jsonify({'error': f'Failed to get chat history: {str(e)}'}), 500
+
+
+@app.route('/api/chat/clear', methods=['POST'])
+def clear_chat_history():
+    """Clear chat messages for the current user's chat session.
+
+    Accepts optional JSON body: { "session_id": <int> }
+    If not provided, clears the first (current) ChatSession for the user.
+    """
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    try:
+        data = request.get_json(silent=True) or {}
+        requested_session_id = data.get('session_id')
+
+        # Find the target chat session for this user
+        if requested_session_id:
+            chat_session = ChatSession.query.filter_by(id=requested_session_id, user_id=current_user.id).first()
+        else:
+            chat_session = ChatSession.query.filter_by(user_id=current_user.id).first()
+
+        if not chat_session:
+            return jsonify({'success': True, 'message': 'No chat session found to clear', 'cleared': 0})
+
+        # Delete all messages for this session
+        deleted = ChatMessage.query.filter_by(session_id=chat_session.id).delete()
+        db.session.commit()
+
+        logger.info(f'Cleared {deleted} chat messages for user {current_user.id} session {chat_session.id}')
+        return jsonify({'success': True, 'cleared': deleted})
+
+    except Exception as e:
+        logger.error(f'Error clearing chat history: {str(e)}')
+        db.session.rollback()
+        return jsonify({'error': 'Failed to clear chat history'}), 500
+
+
 
 # Error Handling
 @app.errorhandler(404)

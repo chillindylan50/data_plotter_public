@@ -9,7 +9,9 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from sqlalchemy.exc import SQLAlchemyError
-from models import db, User, DataPoint, DataVariable
+from scipy import stats
+import pandas as pd
+from models import db, User, DataPoint, CorrelationResult
 
 logger = logging.getLogger('data_table_plotter')
 
@@ -162,25 +164,181 @@ def clear_user_data(user_id: str) -> None:
         db.session.rollback()
         raise
 
-def get_user_variables(user_id: str) -> List[Dict[str, Any]]:
-    """Get variable definitions for a user.
+
+def calculate_correlations(user_id: str) -> None:
+    """Calculate all correlations for a user's data and store in database.
     
     Args:
-        user_id: The user's ID to get variables for.
-        
-    Returns:
-        List of variable definitions.
+        user_id: The user's ID to calculate correlations for.
     """
     try:
-        variables = DataVariable.query.filter_by(user_id=user_id).all()
+        # Clear existing correlations
+        CorrelationResult.query.filter_by(user_id=user_id).delete()
+        
+        # Load user data
+        data_points = load_user_data(user_id)
+        if len(data_points) < 2:
+            logger.info(f'Not enough data points for correlations (user {user_id})')
+            db.session.commit()
+            return
+        
+        # Convert to DataFrame for easier processing
+        df = pd.DataFrame(data_points)
+        
+        # Get numeric columns (excluding Date)
+        numeric_columns = []
+        for col in df.columns:
+            if col != 'Date':
+                try:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                    if not df[col].isna().all():
+                        numeric_columns.append(col)
+                except:
+                    continue
+        
+        if len(numeric_columns) < 2:
+            logger.info(f'Not enough numeric columns for correlations (user {user_id})')
+            db.session.commit()
+            return
+        
+        # Calculate correlations for all pairs
+        for i, col_x in enumerate(numeric_columns):
+            for col_y in numeric_columns[i+1:]:
+                x_values = df[col_x].dropna()
+                y_values = df[col_y].dropna()
+                
+                # Align the data (only use rows where both values exist)
+                common_indices = x_values.index.intersection(y_values.index)
+                if len(common_indices) < 2:
+                    continue
+                
+                x_aligned = x_values.loc[common_indices]
+                y_aligned = y_values.loc[common_indices]
+                
+                # Check for constant values
+                if x_aligned.std() == 0 or y_aligned.std() == 0:
+                    continue
+                
+                # Calculate correlation
+                correlation, p_value = stats.pearsonr(x_aligned, y_aligned)
+                
+                # Determine strength and direction
+                strength = get_correlation_strength(abs(correlation))
+                direction = 'positive' if correlation > 0 else 'negative'
+                
+                # Store result
+                result = CorrelationResult(
+                    user_id=user_id,
+                    variable_x=col_x,
+                    variable_y=col_y,
+                    correlation=round(correlation, 3),
+                    p_value=round(p_value, 3),
+                    strength=strength,
+                    direction=direction
+                )
+                db.session.add(result)
+        
+        db.session.commit()
+        logger.info(f'Calculated correlations for user {user_id}')
+        
+    except Exception as e:
+        logger.error(f'Error calculating correlations for user {user_id}: {str(e)}')
+        db.session.rollback()
+        raise
+
+
+def get_correlation_strength(abs_correlation: float) -> str:
+    """Determine correlation strength from absolute correlation value.
+    
+    Args:
+        abs_correlation: Absolute value of correlation coefficient.
+        
+    Returns:
+        String describing correlation strength.
+    """
+    if abs_correlation > 0.7:
+        return "strong"
+    elif abs_correlation > 0.3:
+        return "moderate"
+    elif abs_correlation > 0.1:
+        return "weak"
+    else:
+        return "very weak"
+
+
+
+def get_all_correlations(user_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Get all correlations for a user, ordered by strength.
+    
+    Args:
+        user_id: The user's ID to get correlations for.
+        limit: Optional limit on number of correlations to return.
+        
+    Returns:
+        List of correlation dictionaries.
+    """
+    try:
+        query = CorrelationResult.query.filter_by(user_id=user_id).order_by(
+            CorrelationResult.correlation.desc()
+        )
+        
+        if limit:
+            query = query.limit(limit)
+        
+        correlations = query.all()
+        
         return [
             {
-                'name': var.name,
-                'display_name': var.display_name,
-                'data_type': var.data_type
+                'variable1': corr.variable_x,
+                'variable2': corr.variable_y,
+                'correlation': corr.correlation,
+                'p_value': corr.p_value,
+                'strength': corr.strength,
+                'direction': corr.direction,
+                'calculated_at': corr.calculated_at.isoformat()
             }
-            for var in variables
+            for corr in correlations
         ]
+        
     except SQLAlchemyError as e:
-        logger.error(f'Error getting variables for user {user_id}: {str(e)}')
+        logger.error(f'Error getting all correlations for user {user_id}: {str(e)}')
+        return []
+
+
+def get_top_correlations(user_id: str, count: int = 3) -> List[Dict[str, Any]]:
+    """Get top N correlations by absolute strength for chat context.
+    
+    Args:
+        user_id: The user's ID to get correlations for.
+        count: Number of top correlations to return.
+        
+    Returns:
+        List of top correlation dictionaries.
+    """
+    try:
+        # Get all correlations and sort by absolute correlation value
+        correlations = CorrelationResult.query.filter_by(user_id=user_id).all()
+        
+        # Sort by absolute correlation value (strongest first)
+        sorted_correlations = sorted(
+            correlations, 
+            key=lambda x: abs(x.correlation), 
+            reverse=True
+        )[:count]
+        
+        return [
+            {
+                'variable1': corr.variable_x,
+                'variable2': corr.variable_y,
+                'correlation': corr.correlation,
+                'p_value': corr.p_value,
+                'strength': corr.strength,
+                'direction': corr.direction,
+                'calculated_at': corr.calculated_at.isoformat()
+            }
+            for corr in sorted_correlations
+        ]
+        
+    except SQLAlchemyError as e:
+        logger.error(f'Error getting top correlations for user {user_id}: {str(e)}')
         return []

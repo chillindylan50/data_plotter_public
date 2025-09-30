@@ -3,7 +3,7 @@
 .env.*
 !.env.example
 
-# Log files
+# Log files. Uncomment before committing, but can help to comment during debugging with AI.
 *.log
 logs/
 

@@ -1,7 +1,7 @@
 """Database models for the diary plotter application.
 
 This module defines the SQLAlchemy models for storing user data and data points
-in a relational database instead of CSV files.
+in a relational database, using SQLAlchemy and SQLite.
 """
 
 from datetime import datetime
@@ -41,16 +41,53 @@ class DataPoint(db.Model):
     def __repr__(self):
         return f'<DataPoint {self.id} for user {self.user_id}>'
 
-class DataVariable(db.Model):
-    """Model for storing variable definitions and metadata."""
-    __tablename__ = 'data_variables'
+
+class ChatSession(db.Model):
+    """Chat session model for storing ChatGPT conversations."""
+    __tablename__ = 'chat_sessions'
     
     id = Column(Integer, primary_key=True)
     user_id = Column(String(255), ForeignKey('users.id'), nullable=False)
-    name = Column(String(255), nullable=False)
-    display_name = Column(String(255), nullable=False)
-    data_type = Column(String(50), default='float')  # float, int, string
+    api_key_hash = Column(String(255))  # Hashed OpenAI API key
+    last_correlation_context = Column(Text)  # JSON of last sent correlations
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationship to chat messages
+    messages = relationship('ChatMessage', backref='session', lazy=True, cascade='all, delete-orphan')
     
     def __repr__(self):
-        return f'<DataVariable {self.name} for user {self.user_id}>'
+        return f'<ChatSession {self.id} for user {self.user_id}>'
+
+
+class ChatMessage(db.Model):
+    """Chat message model for storing individual chat messages."""
+    __tablename__ = 'chat_messages'
+    
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, ForeignKey('chat_sessions.id'), nullable=False)
+    role = Column(String(20), nullable=False)  # 'user', 'assistant', 'system'
+    content = Column(Text, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<ChatMessage {self.id} ({self.role})>'
+
+
+
+class CorrelationResult(db.Model):
+    """Model for storing calculated correlation results."""
+    __tablename__ = 'correlation_results'
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(255), ForeignKey('users.id'), nullable=False)
+    variable_x = Column(String(255), nullable=False)
+    variable_y = Column(String(255), nullable=False)
+    correlation = Column(Float, nullable=False)
+    p_value = Column(Float, nullable=False)
+    strength = Column(String(50), nullable=False)  # 'weak', 'moderate', 'strong'
+    direction = Column(String(50), nullable=False)  # 'positive', 'negative'
+    calculated_at = Column(DateTime, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<CorrelationResult {self.variable_x}↔{self.variable_y}: r={self.correlation}>'
