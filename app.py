@@ -1,30 +1,29 @@
-"""Flask application for data visualization and correlation analysis. Long-term use for healthcare applications.
+"""Flask application for data visualization and correlation analysis.
 
-This module provides a web interface for users to input, visualize, and analyze
-numerical data. It supports correlation analysis between variables and provides
-interactive plotting capabilities.
+Provides a web interface for users to input, visualize, and analyze
+numerical data with correlation analysis and a chat assistant.
 """
 
-from datetime import date
-import os
-import logging
-import unicodedata
-import re
-import sys
-from datetime import datetime
-from typing import Dict, List, Any, Optional, Union
-import pandas as pd
-from scipy import stats
-import hashlib
-import openai
+# === Standard Library Imports ===
+from datetime import date, datetime  # dates for UI, timestamps for DB
+import os  # filesystem paths and environment
+import logging  # application logging
+import re  # small sanitization utility
+import unicodedata  # normalize/sanitize text for chat content
+import hashlib  # hashing API key (non-reversible)
+from typing import Dict, List, Any, Optional  # type hints
 
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
-from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from google.oauth2 import id_token
-from google.auth.transport import requests
-from dotenv import load_dotenv
+# === Third-Party Imports ===
+from scipy import stats  # correlation calculations
+import openai  # OpenAI client SDK
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for  # Flask web
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user  # Auth
+from google.oauth2 import id_token  # Google OAuth token verification
+from google.auth.transport import requests  # Google OAuth HTTP transport
+from dotenv import load_dotenv  # load local .env in development
 
-from models import db, User, DataPoint, ChatSession, ChatMessage, CorrelationResult
+# === Local Application Imports ===
+from models import db, User, DataPoint, ChatSession, ChatMessage, CorrelationResult  # SQLAlchemy models
 from database import (load_user_data, save_user_data, add_data_point, clear_user_data, 
                      calculate_correlations, get_all_correlations, get_top_correlations)
 
@@ -717,7 +716,7 @@ def send_chat_message():
                 correlation_context += f"{i}. {corr['variable1']} and {corr['variable2']}: r = {corr['correlation']:.3f} (p = {corr['p_value']:.3f})\n"
         
         # Create system message with correlation context
-        system_message = f"""You are a helpful AI assistant analyzing personal data patterns. The user is tracking various personal metrics over time. The main three correlations we have found are: {correlation_context}. Please provide insights based on these correlations and answer the user's questions about their data patterns. Focus on practical, actionable advice while being supportive and encouraging."""
+        system_message = f"""You are a helpful AI assistant analyzing personal data patterns. The user is tracking various personal metrics over time. The main three correlations we have found are: {correlation_context}. Please provide insights based on these correlations and answer the user's questions about their data patterns. Focus on practical, actionable advice while being supportive and encouraging. The user does not need to be reminded of their correlation coefficients or p-values. Just discuss like you're their doctor or nurse."""
         
         # Set up OpenAI client with user's API key
         # Note: In production, we should decrypt the stored API key

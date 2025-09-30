@@ -1,31 +1,7 @@
-async function clearChat(): Promise<void> {
-    try {
-        const response = await fetch('/api/chat/clear', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: chatSessionId })
-        });
-        const result = await response.json();
-        if (result.success) {
-            // Clear UI
-            const chatMessages = document.getElementById('chatMessages');
-            if (chatMessages) {
-                chatMessages.innerHTML = '';
-            }
-            // Optionally reload history to confirm cleared state
-            await loadChatHistory();
-        } else {
-            alert(result.error || 'Failed to clear chat history');
-        }
-    } catch (error) {
-        alert('Error clearing chat history');
-        console.error('Error clearing chat history:', error);
-    }
-}
 /**
 * @fileoverview Functions that support the data table and plot.
-* @author Dylan Shah
-* Copyright 2025 Dylan Shah. All rights reserved.
+* Chat interface helpers live in the "Chat Interface Functions" section.
+* © 2025 Dylan Shah. All rights reserved.
 */
 
 // Type definitions
@@ -145,6 +121,30 @@ async function displayUserName() {
         }
     } catch (error) {
         console.error('Failed to display user name:', error);
+    }
+}
+
+// Clear current chat session history (backend and UI)
+async function clearChat(): Promise<void> {
+    try {
+        const response = await fetch('/api/chat/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: chatSessionId })
+        });
+        const result = await response.json();
+        if (result.success) {
+            // Clear messages in UI
+            const chatMessages = document.getElementById('chatMessages');
+            if (chatMessages) chatMessages.innerHTML = '';
+            // Reload (will be empty)
+            await loadChatHistory();
+        } else {
+            alert(result.error || 'Failed to clear chat history');
+        }
+    } catch (error) {
+        console.error('Error clearing chat history:', error);
+        alert('Error clearing chat history');
     }
 }
 
@@ -622,7 +622,9 @@ function setupColumnTitleListeners(): void {
 
     });
 }
-// Visualizations and analysis
+// ===========================
+// Visualizations and Analysis
+// ===========================
 /**
  * Updates the scatter plot with current data.
  * Uses selected X and Y axes for plotting.
@@ -1226,6 +1228,9 @@ function setupDropZone(): void {
 }
 
 // Chat Interface Functions
+// ===========================
+// Chat Interface Functions
+// ===========================
 function initializeChatInterface(): void {
     const chatToggle = document.getElementById('chatToggle');
     const chatPanel = document.getElementById('chatPanel');
@@ -1366,6 +1371,9 @@ function addMessageToChat(role: 'user' | 'assistant', content: string): void {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
+// ===========================
+// Chat - History & Utilities
+// ===========================
 async function loadChatHistory(): Promise<void> {
     if (!chatSessionId) return;
     

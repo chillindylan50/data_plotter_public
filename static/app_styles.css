@@ -390,8 +390,26 @@ th {
     bottom: 0;
     right: 20px;
     z-index: 1000;
-    max-width: 400px;
-    width: 100%;
+    width: 50vw; /* default for larger screens (overridden below) */
+    max-width: none;
+}
+
+/* Small screens: full width */
+@media (max-width: 800px) {
+    .chat-container {
+        left: 0;
+        right: 0;
+        width: 100vw;
+    }
+}
+
+/* Larger screens: one-HALF of viewport width */
+@media (min-width: 801px) {
+    .chat-container {
+        right: 20px;
+        left: auto;
+        width: 50vw;
+    }
 }
 
 .chat-toggle {
