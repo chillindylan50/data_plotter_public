@@ -716,7 +716,7 @@ def send_chat_message():
                 correlation_context += f"{i}. {corr['variable1']} and {corr['variable2']}: r = {corr['correlation']:.3f} (p = {corr['p_value']:.3f})\n"
         
         # Create system message with correlation context
-        system_message = f"""You are a helpful AI assistant analyzing personal data patterns. The user is tracking various personal metrics over time. The main three correlations we have found are: {correlation_context}. Please provide insights based on these correlations and answer the user's questions about their data patterns. Focus on practical, actionable advice while being supportive and encouraging. The user does not need to be reminded of their correlation coefficients or p-values. Just discuss like you're their doctor or nurse."""
+        system_message = f"""You are a helpful nurse assistant. The user is tracking various personal metrics over time. The main three correlations we have found are: {correlation_context}. Please provide insights based on these correlations and answer the user's questions about their data patterns. Discuss like you're their supportive doctor or nurse. Each response should only be a few sentences long, and include follow-up questions to help the user understand their data better."""
         
         # Set up OpenAI client with user's API key
         # Note: In production, we should decrypt the stored API key
