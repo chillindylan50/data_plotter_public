@@ -412,6 +412,26 @@ th {
     }
 }
 
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+    z-index: 1100;
+}
+
+.modal {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    background: #fff;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-default);
+    padding: 16px 18px;
+    width: min(90vw, 420px);
+    z-index: 1101;
+}
+
 .chat-toggle {
     background: var(--color-primary);
     color: white;

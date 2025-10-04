@@ -1240,6 +1240,9 @@ function initializeChatInterface(): void {
     const updateContextBtn = document.getElementById('updateContextBtn');
     const dismissNotificationBtn = document.getElementById('dismissNotificationBtn');
     const clearChatBtn = document.getElementById('clearChatBtn');
+    const acknowledgeDisclaimerBtn = document.getElementById('acknowledgeDisclaimerBtn');
+    const disclaimerModal = document.getElementById('disclaimerModal');
+    const disclaimerOverlay = document.getElementById('disclaimerOverlay');
 
     // Toggle chat panel
     chatToggle?.addEventListener('click', () => {
@@ -1337,6 +1340,13 @@ function initializeChatInterface(): void {
     clearChatBtn?.addEventListener('click', async () => {
         await clearChat();
     });
+
+    // Acknowledge disclaimer
+    acknowledgeDisclaimerBtn?.addEventListener('click', () => {
+        localStorage.setItem('epsilon_disclaimer_ack', '1');
+        if (disclaimerModal) disclaimerModal.style.display = 'none';
+        if (disclaimerOverlay) disclaimerOverlay.style.display = 'none';
+    });
 }
 
 function showChatInterface(): void {
@@ -1345,12 +1355,21 @@ function showChatInterface(): void {
     const chatMessages = document.getElementById('chatMessages');
     const chatInput = document.getElementById('chatInput');
     const chatControls = document.getElementById('chatControls');
+    const disclaimerModal = document.getElementById('disclaimerModal');
+    const disclaimerOverlay = document.getElementById('disclaimerOverlay');
     
     if (apiKeySection) apiKeySection.style.display = 'none';
     if (correlationContext) correlationContext.style.display = 'block';
     if (chatMessages) chatMessages.style.display = 'block';
     if (chatInput) chatInput.style.display = 'flex';
     if (chatControls) chatControls.style.display = 'block';
+
+    // Show disclaimer if not acknowledged
+    const acknowledged = localStorage.getItem('epsilon_disclaimer_ack') === '1';
+    if (!acknowledged) {
+        if (disclaimerModal) disclaimerModal.style.display = 'block';
+        if (disclaimerOverlay) disclaimerOverlay.style.display = 'block';
+    }
 }
 
 function addMessageToChat(role: 'user' | 'assistant', content: string): void {
