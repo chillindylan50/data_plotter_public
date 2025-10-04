@@ -3,7 +3,7 @@
 .env.*
 !.env.example
 
-# Log files
+# Log files. Uncomment before committing, but can help to comment during debugging with AI.
 *.log
 logs/
 
@@ -44,7 +44,14 @@ Playwright-report/
 # Dyl ignore .pem self-signed HTTPS certificates
 *.pem
 
-# Include Requirements
+# Dyl by default, ignore .csv and .xlsx
+*.csv
+*.xlsx
+
+# Dyl ignore anything we throw in Archive
+Archive/
+
+# Include Requirements and environment configuration
 !package.json
 !tsconfig.json
 !requirements.txt

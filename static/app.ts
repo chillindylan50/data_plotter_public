@@ -1,7 +1,7 @@
 /**
 * @fileoverview Functions that support the data table and plot.
-* @author Dylan Shah
-* Copyright 2025 Dylan Shah. All rights reserved.
+* Chat interface helpers live in the "Chat Interface Functions" section.
+* © 2025 Dylan Shah. All rights reserved.
 */
 
 // Type definitions
@@ -13,6 +13,11 @@ interface RowData {
 // Global variables
 let tableData: RowData[] = [];
 let columnCounter: number = 0;  // Used to generate unique column names
+
+// Chat-related global variables
+let chatSessionId: number | null = null;
+let lastCorrelations: any[] = [];
+let isChatOpen: boolean = false;
 
 // Get base URL from current path
 const getBaseUrl = () => {
@@ -88,12 +93,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             yAxis2Select.addEventListener('change', updatePlot);
         }
 
-        // Initialize UI components
+        // Initialize table and plot
+        updateTableHeaders();
+        updateInputRow();
         renderTableRows();
         updateDropdownSelectors();
         updatePlot();
+        
+        // Initialize chat interface
+        initializeChatInterface();
+        
     } catch (error) {
-        console.error('Error initializing application:', error);
+        console.error('Error initializing app:', error);
     }
 });
 
@@ -110,6 +121,30 @@ async function displayUserName() {
         }
     } catch (error) {
         console.error('Failed to display user name:', error);
+    }
+}
+
+// Clear current chat session history (backend and UI)
+async function clearChat(): Promise<void> {
+    try {
+        const response = await fetch('/api/chat/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: chatSessionId })
+        });
+        const result = await response.json();
+        if (result.success) {
+            // Clear messages in UI
+            const chatMessages = document.getElementById('chatMessages');
+            if (chatMessages) chatMessages.innerHTML = '';
+            // Reload (will be empty)
+            await loadChatHistory();
+        } else {
+            alert(result.error || 'Failed to clear chat history');
+        }
+    } catch (error) {
+        console.error('Error clearing chat history:', error);
+        alert('Error clearing chat history');
     }
 }
 
@@ -587,7 +622,9 @@ function setupColumnTitleListeners(): void {
 
     });
 }
-// Visualizations and analysis
+// ===========================
+// Visualizations and Analysis
+// ===========================
 /**
  * Updates the scatter plot with current data.
  * Uses selected X and Y axes for plotting.
@@ -854,163 +891,246 @@ function calculateCorrelations(): void {
 }
 
 /**
- * Calculate and display a correlation matrix for all numeric variables
+ * Calculate and display a correlation matrix for all numeric variables using server-side calculation
  */
-function calculateAllCorrelations(): void {
+async function calculateAllCorrelations(): Promise<void> {
     const matrixDiv = document.getElementById('correlationMatrix');
     if (!matrixDiv) return;
 
     // Show loading state
     matrixDiv.innerHTML = '<div style="padding: 20px; text-align: center; background-color: #e3f2fd; border-radius: 4px;">Calculating correlation matrix...</div>';
 
-    // Get all column names
-    const columnNames = getColumnHeaders();
+    try {
+        // Trigger server-side correlation calculation
+        const calculateResponse = await fetch('/api/correlations/calculate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
 
-    // Extract values for all columns, including Date
-    const columnData = columnNames.map(col => extractNumericValues(col));
-    
-    // Check for invalid values
-    const invalidColumns = columnData.map((data, i) => !data.isValid ? columnNames[i] : null).filter(Boolean);
-    if (invalidColumns.length > 0) {
+        if (!calculateResponse.ok) {
+            throw new Error('Failed to calculate correlations');
+        }
+
+        // Get all calculated correlations
+        const correlationsResponse = await fetch('/api/correlations/all');
+        const result = await correlationsResponse.json();
+
+        if (!correlationsResponse.ok) {
+            throw new Error(result.error || 'Failed to get correlations');
+        }
+
+        displayCorrelationMatrix(result.correlations);
+        
+        // Update chat correlation context if chat is open
+        if (isChatOpen) {
+            await updateCorrelationContext();
+        }
+
+    } catch (error) {
         matrixDiv.innerHTML = `<div style="padding: 20px; text-align: center; background-color: #ffebee; border-radius: 4px;">
-            Error: Invalid numeric values in columns: ${invalidColumns.join(', ')}
+            Error calculating correlations: ${error instanceof Error ? error.message : 'Unknown error'}
         </div>`;
+    }
+}
+
+/**
+ * Display correlation matrix from server-calculated correlations as a Plotly heatmap
+ */
+function displayCorrelationMatrix(correlations: any[]): void {
+    const matrixDiv = document.getElementById('correlationMatrix');
+    if (!matrixDiv) return;
+
+    if (correlations.length === 0) {
+        matrixDiv.innerHTML = '<div style="padding: 20px; text-align: center; background-color: #fff3cd; border-radius: 4px;">No correlations found. Add more data points to calculate correlations.</div>';
         return;
     }
 
-    // Create all pairs for correlation calculation
-    const correlationPromises: Promise<any>[] = [];
-    for (let i = 0; i < columnNames.length; i++) {
-        for (let j = i; j < columnNames.length; j++) {
-            correlationPromises.push(
-                fetch(baseUrl + 'calculate_correlation', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        x_values: columnData[i].values,
-                        y_values: columnData[j].values,
-                        xAxis: columnNames[i],
-                        yAxis: columnNames[j],
-                        isDateX: columnNames[i] === 'Date',
-                        isDateY: columnNames[j] === 'Date'
-                    })
-                })
-            );
+    // Get unique variables
+    const variables = new Set<string>();
+    correlations.forEach(corr => {
+        variables.add(corr.variable1);
+        variables.add(corr.variable2);
+    });
+    const variableList = Array.from(variables).sort();
+
+    // Create correlation lookup
+    const corrLookup = new Map<string, any>();
+    correlations.forEach(corr => {
+        const key1 = `${corr.variable1}-${corr.variable2}`;
+        const key2 = `${corr.variable2}-${corr.variable1}`;
+        corrLookup.set(key1, corr);
+        corrLookup.set(key2, corr);
+    });
+
+    // Create correlation matrix data (upper triangle only)
+    const matrix: (number | null)[][] = Array(variableList.length).fill(0)
+        .map(() => Array(variableList.length).fill(null));
+    
+    // Fill matrix with correlation values (upper triangle only)
+    for (let i = 0; i < variableList.length; i++) {
+        for (let j = i; j < variableList.length; j++) {
+            if (i === j) {
+                matrix[i][j] = 1.0; // Diagonal
+            } else {
+                const corr = corrLookup.get(`${variableList[i]}-${variableList[j]}`);
+                if (corr) {
+                    matrix[i][j] = corr.correlation;
+                }
+            }
         }
     }
 
-    // Wait for all correlations to complete
-    Promise.all(correlationPromises)
-        .then(responses => Promise.all(responses.map(r => r.json())))
-        .then(results => {
-            // Create correlation matrix data
-            const matrix: (number | null)[][] = Array(columnNames.length).fill(0)
-                .map(() => Array(columnNames.length).fill(null));
+    // Create hover text with correlation details
+    const hoverText = matrix.map((row, i) => 
+        row.map((val, j) => {
+            if (val === null) return '';
+            if (i === j) return `${variableList[i]}<br>Perfect correlation (1.000)`;
             
-            // Fill matrix with correlation values
-            let resultIndex = 0;
-            for (let i = 0; i < columnNames.length; i++) {
-                for (let j = i; j < columnNames.length; j++) {
-                    const correlation = results[resultIndex].correlation || 0;
-                    if (i <= j) {  // Skip diagonal
-                        matrix[j][i] = correlation;  // Only fill upper triangle
-                    }
-                    resultIndex++;
-                }
+            const corr = corrLookup.get(`${variableList[i]}-${variableList[j]}`);
+            if (corr) {
+                const significance = corr.p_value < 0.05 ? ' (significant)' : ' (not significant)';
+                return `${variableList[i]} vs ${variableList[j]}<br>r = ${val.toFixed(3)}<br>p = ${corr.p_value.toFixed(3)}${significance}<br>${corr.strength} ${corr.direction}`;
             }
-
-            // Create Plotly heatmap
-            const data: any = [{
-                z: matrix,
-                x: columnNames,
-                y: columnNames,
-                type: 'heatmap',
-                colorscale: [
-                    ['0.0', '#d73027'],  // Strong negative (red)
-                    ['0.25', '#f46d43'], // Moderate negative (orange-red)
-                    ['0.5', '#ffffff'],  // No correlation (white)
-                    ['0.75', '#74add1'], // Moderate positive (light blue)
-                    ['1.0', '#4575b4']   // Strong positive (blue)
-                ],
-                zmin: -1,
-                zmax: 1,
-                text: matrix.map((row, i) => 
-                    row.map((val, j) => {
-                        if (val === null) return '';
-                        return `${columnNames[i]} vs ${columnNames[j]}<br>r = ${val.toFixed(3)}`;
-                    })
-                ),
-                hoverongaps: false,
-                hoverinfo: 'text'
-            }];
-
-            const layout: Partial<Plotly.Layout> = {
-                // title: {
-                //     text: 'Correlation Matrix Heatmap',
-                //     font: {
-                //         size: 24
-                //     },
-                //     y: 0.95
-                // },
-                width: 1000,   // Fixed width that works well with container
-                height: 600,   // Shorter height
-                margin: {
-                    l: 60,   // Reduced margins
-                    r: 60,
-                    t: 40,
-                    b: 40
-                },
-                xaxis: {
-                    side: 'top',  // Move labels to top
-                    tickangle: 0,
-                },
-                yaxis: {
-                    side: 'left',
-                    tickangle: 0
-                },
-                annotations: matrix.map((row, i) => 
-                    row.map((val, j) => ({
-                        text: val === null ? '' : val.toFixed(2),
-                        x: j,
-                        y: i,
-                        xref: 'x' as const,  // Type assertion to match Plotly's expected type
-                        yref: 'y' as const,
-                        showarrow: false,
-                        font: {
-                            color: val === null ? 'transparent' : (Math.abs(val) > 0.5 ? 'white' : 'black')
-                        }
-                    }))
-                ).flat()
-            };
-
-            // Find strongest correlation (excluding self-correlations)
-            let maxCorr = 0;
-            let maxI = 0;
-            let maxJ = 0;
-            matrix.forEach((row, i) => {
-                row.forEach((val, j) => {
-                    if (val !== null && i !== j && Math.abs(val) > Math.abs(maxCorr)) {
-                        maxCorr = val;
-                        maxI = i;
-                        maxJ = j;
-                    }
-                });
-            });
-
-            // Create message about strongest correlation
-            const corrMessage = `<div style="text-align: center; margin: 10px 0; padding: 10px; background-color: #e3f2fd; border-radius: 4px;">
-                The most strongly correlated variables were ${columnNames[maxI]} and ${columnNames[maxJ]} (r = ${maxCorr.toFixed(3)}).
-            </div>`;
-
-            // Plot the correlation matrix and output the main correlated variables
-            matrixDiv.innerHTML = corrMessage;
-            Plotly.newPlot('correlationMatrix', data, layout);
+            return `${variableList[i]} vs ${variableList[j]}<br>r = ${val.toFixed(3)}`;
         })
-        .catch(error => {
-            matrixDiv.innerHTML = `<div style="padding: 20px; text-align: center; background-color: #ffebee; border-radius: 4px;">
-                Error calculating correlation matrix: ${error}
-            </div>`;
-        });
+    );
+
+    // Create Plotly heatmap
+    const data: any = [{
+        z: matrix,
+        x: variableList,
+        y: variableList,
+        type: 'heatmap',
+        colorscale: [
+            [0.0, '#d73027'],    // Strong negative (red)
+            [0.25, '#f46d43'],   // Moderate negative (orange-red)
+            [0.5, '#ffffff'],    // No correlation (white)
+            [0.75, '#74add1'],   // Moderate positive (light blue)
+            [1.0, '#4575b4']     // Strong positive (blue)
+        ],
+        zmin: -1,
+        zmax: 1,
+        text: hoverText,
+        hoverongaps: false,
+        hovertemplate: '%{text}<extra></extra>',
+        showscale: true,
+        colorbar: {
+            title: 'Correlation',
+            titleside: 'right',
+            tickmode: 'array',
+            tickvals: [-1, -0.5, 0, 0.5, 1],
+            ticktext: ['-1.0', '-0.5', '0.0', '0.5', '1.0']
+        }
+    }];
+
+    const layout: Partial<Plotly.Layout> = {
+        title: {
+            text: 'Correlation Matrix',
+            font: { size: 16 }
+        },
+        width: Math.max(400, variableList.length * 80),
+        height: Math.max(400, variableList.length * 80),
+        margin: { l: 100, r: 100, t: 200, b: 100 },
+        xaxis: {
+            side: 'top',
+            tickangle: 45,
+            showgrid: false
+        },
+        yaxis: {
+            side: 'left',
+            tickangle: 0,
+            showgrid: false,
+            autorange: 'reversed'  // Reverse y-axis so it matches typical matrix layout
+        },
+        annotations: matrix.map((row, i) => 
+            row.map((val, j) => {
+                if (val === null) return null;
+                return {
+                    text: val.toFixed(2),
+                    x: j,
+                    y: i,
+                    xref: 'x' as const,
+                    yref: 'y' as const,
+                    showarrow: false,
+                    font: {
+                        color: Math.abs(val) > 0.5 ? 'white' : 'black',
+                        size: 12
+                    }
+                };
+            })
+        ).flat().filter(annotation => annotation !== null)
+    };
+
+    // Find strongest correlations (excluding diagonal)
+    const nonDiagonalCorrelations = correlations.filter(corr => corr.variable1 !== corr.variable2);
+    const sortedByStrength = nonDiagonalCorrelations.sort((a, b) => Math.abs(b.correlation) - Math.abs(a.correlation));
+    
+    // Create summary text
+    let summaryText = '';
+    if (sortedByStrength.length > 0) {
+        const strongest = sortedByStrength[0];
+        const strengthDesc = Math.abs(strongest.correlation) > 0.7 ? 'very strong' : 
+                           Math.abs(strongest.correlation) > 0.5 ? 'strong' : 
+                           Math.abs(strongest.correlation) > 0.3 ? 'moderate' : 'weak';
+        const direction = strongest.correlation > 0 ? 'positive' : 'negative';
+        const significance = strongest.p_value < 0.05 ? ' (statistically significant)' : ' (not statistically significant)';
+        
+        summaryText = `<div style="margin-bottom: 15px; padding: 15px; background-color: #e3f2fd; border-radius: 4px; border-left: 4px solid #2196f3;">
+            <strong>Strongest Correlation:</strong> ${strongest.variable1} and ${strongest.variable2} show a ${strengthDesc} ${direction} correlation 
+            (r = ${strongest.correlation.toFixed(3)}, p = ${strongest.p_value.toFixed(3)})${significance}.
+        </div>`;
+        
+        // Add top 3 if there are more correlations
+        if (sortedByStrength.length > 1) {
+            const top3 = sortedByStrength.slice(0, Math.min(3, sortedByStrength.length));
+            let top3Text = '<div style="margin-bottom: 15px; padding: 10px; background-color: #f8f9fa; border-radius: 4px;"><strong>Top Correlations:</strong><ol style="margin: 5px 0 0 20px; padding: 0;">';
+            
+            top3.forEach(corr => {
+                const absCorr = Math.abs(corr.correlation);
+                const strength = absCorr > 0.7 ? 'very strong' : absCorr > 0.5 ? 'strong' : absCorr > 0.3 ? 'moderate' : 'weak';
+                const direction = corr.correlation > 0 ? 'positive' : 'negative';
+                const sig = corr.p_value < 0.05 ? '*' : '';
+                top3Text += `<li>${corr.variable1} ↔ ${corr.variable2}: ${strength} ${direction} (r = ${corr.correlation.toFixed(3)}${sig})</li>`;
+            });
+            
+            top3Text += '</ol><div style="font-size: 11px; color: #666; margin-top: 5px;">* statistically significant (p < 0.05)</div></div>';
+            summaryText += top3Text;
+        }
+    } else {
+        summaryText = `<div style="margin-bottom: 15px; padding: 15px; background-color: #fff3cd; border-radius: 4px; border-left: 4px solid #ffc107;">
+            <strong>No correlations found.</strong> Add more data points with at least 2 different variables to calculate correlations.
+        </div>`;
+    }
+
+    // Clear the div and add summary
+    matrixDiv.innerHTML = summaryText;
+    
+    // Create plot container and add the plot
+    const plotContainer = document.createElement('div');
+    matrixDiv.appendChild(plotContainer);
+    Plotly.newPlot(plotContainer, data, layout, {responsive: true});
+
+    // Add interpretation note
+    const noteDiv = document.createElement('div');
+    noteDiv.style.cssText = 'margin-top: 15px; padding: 10px; background-color: #f8f9fa; border-radius: 4px; font-size: 12px; color: #666;';
+    noteDiv.innerHTML = `
+        <strong>Interpretation:</strong> 
+        Red = negative correlation, White = no correlation, Blue = positive correlation. 
+        Only upper triangle shown (matrix is symmetric). 
+        Hover over cells for detailed statistics.
+    `;
+    matrixDiv.appendChild(noteDiv);
+}
+
+/**
+ * Get background color for correlation value
+ */
+function getCorrelationColor(correlation: number): string {
+    const abs = Math.abs(correlation);
+    if (abs > 0.7) return correlation > 0 ? '#c8e6c9' : '#ffcdd2';
+    if (abs > 0.3) return correlation > 0 ? '#e8f5e9' : '#ffebee';
+    if (abs > 0.1) return correlation > 0 ? '#f1f8e9' : '#fce4ec';
+    return '#f9f9f9';
 }
 
 // UI Update Functions
@@ -1070,8 +1190,10 @@ function setupDropZone(): void {
 
         dropZone.addEventListener('drop', async (e) => {
             const file = (e as DragEvent).dataTransfer?.files[0];
-            if (!file || !file.name.endsWith('.csv')) {
-                alert('Please upload a CSV file');
+            const allowedExtensions = ['.csv', '.xlsx', '.xls'];
+            const fileExt = file?.name.toLowerCase().match(/\.[^.]*$/)?.[0] || '';
+            if (!file || !allowedExtensions.some(ext => fileExt === ext)) {
+                alert('Please upload a CSV or Excel file (.csv, .xlsx, .xls)');
                 return;
             }
             
@@ -1079,7 +1201,7 @@ function setupDropZone(): void {
             formData.append('file', file);
             
             try {
-                const response = await fetch(baseUrl + 'import_csv', {
+                const response = await fetch(baseUrl + 'import_datafile', {
                     method: 'POST',
                     body: formData
                 });
@@ -1102,5 +1224,272 @@ function setupDropZone(): void {
                 alert(error instanceof Error ? error.message : 'Error importing CSV');
             }
         });
+    }
+}
+
+// Chat Interface Functions
+// ===========================
+// Chat Interface Functions
+// ===========================
+function initializeChatInterface(): void {
+    const chatToggle = document.getElementById('chatToggle');
+    const chatPanel = document.getElementById('chatPanel');
+    const initializeChatBtn = document.getElementById('initializeChatBtn');
+    const sendMessageBtn = document.getElementById('sendMessageBtn');
+    const messageInput = document.getElementById('messageInput') as HTMLInputElement;
+    const updateContextBtn = document.getElementById('updateContextBtn');
+    const dismissNotificationBtn = document.getElementById('dismissNotificationBtn');
+    const clearChatBtn = document.getElementById('clearChatBtn');
+    const acknowledgeDisclaimerBtn = document.getElementById('acknowledgeDisclaimerBtn');
+    const disclaimerModal = document.getElementById('disclaimerModal');
+    const disclaimerOverlay = document.getElementById('disclaimerOverlay');
+
+    // Toggle chat panel
+    chatToggle?.addEventListener('click', () => {
+        isChatOpen = !isChatOpen;
+        chatPanel?.classList.toggle('open', isChatOpen);
+        
+        if (isChatOpen) {
+            updateCorrelationIndicator();
+        }
+    });
+
+    // Initialize chat with API key
+    initializeChatBtn?.addEventListener('click', async () => {
+        const apiKeyInput = document.getElementById('apiKeyInput') as HTMLInputElement;
+        const apiKey = apiKeyInput.value.trim();
+        
+        if (!apiKey) {
+            alert('Please enter your OpenAI API key');
+            return;
+        }
+        
+        try {
+            const response = await fetch('/api/chat/initialize', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ api_key: apiKey })
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                chatSessionId = result.session_id;
+                showChatInterface();
+                await loadChatHistory();
+                await updateCorrelationContext();
+            } else {
+                alert(result.error || 'Failed to initialize chat');
+            }
+        } catch (error) {
+            alert('Error initializing chat: ' + error);
+        }
+    });
+
+    // Send message
+    const sendMessage = async () => {
+        const message = messageInput.value.trim();
+        if (!message || !chatSessionId) return;
+        
+        try {
+            // Add user message to chat
+            addMessageToChat('user', message);
+            messageInput.value = '';
+            
+            const response = await fetch('/api/chat/send', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: message,
+                    session_id: chatSessionId
+                })
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                addMessageToChat('assistant', result.response);
+            } else {
+                addMessageToChat('assistant', 'Error: ' + (result.error || 'Failed to send message'));
+            }
+        } catch (error) {
+            addMessageToChat('assistant', 'Error: ' + error);
+        }
+    };
+
+    sendMessageBtn?.addEventListener('click', sendMessage);
+    messageInput?.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            sendMessage();
+        }
+    });
+
+    // Update correlation context
+    updateContextBtn?.addEventListener('click', async () => {
+        await updateCorrelationContext();
+        hideCorrelationNotification();
+    });
+
+    dismissNotificationBtn?.addEventListener('click', () => {
+        hideCorrelationNotification();
+    });
+
+    // Clear chat history
+    clearChatBtn?.addEventListener('click', async () => {
+        await clearChat();
+    });
+
+    // Acknowledge disclaimer
+    acknowledgeDisclaimerBtn?.addEventListener('click', () => {
+        localStorage.setItem('epsilon_disclaimer_ack', '1');
+        if (disclaimerModal) disclaimerModal.style.display = 'none';
+        if (disclaimerOverlay) disclaimerOverlay.style.display = 'none';
+    });
+}
+
+function showChatInterface(): void {
+    const apiKeySection = document.getElementById('apiKeySection');
+    const correlationContext = document.getElementById('correlationContext');
+    const chatMessages = document.getElementById('chatMessages');
+    const chatInput = document.getElementById('chatInput');
+    const chatControls = document.getElementById('chatControls');
+    const disclaimerModal = document.getElementById('disclaimerModal');
+    const disclaimerOverlay = document.getElementById('disclaimerOverlay');
+    
+    if (apiKeySection) apiKeySection.style.display = 'none';
+    if (correlationContext) correlationContext.style.display = 'block';
+    if (chatMessages) chatMessages.style.display = 'block';
+    if (chatInput) chatInput.style.display = 'flex';
+    if (chatControls) chatControls.style.display = 'block';
+
+    // Show disclaimer if not acknowledged
+    const acknowledged = localStorage.getItem('epsilon_disclaimer_ack') === '1';
+    if (!acknowledged) {
+        if (disclaimerModal) disclaimerModal.style.display = 'block';
+        if (disclaimerOverlay) disclaimerOverlay.style.display = 'block';
+    }
+}
+
+function addMessageToChat(role: 'user' | 'assistant', content: string): void {
+    const chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) return;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${role}`;
+    
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content';
+    contentDiv.textContent = content;
+    
+    messageDiv.appendChild(contentDiv);
+    chatMessages.appendChild(messageDiv);
+    
+    // Scroll to bottom
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// ===========================
+// Chat - History & Utilities
+// ===========================
+async function loadChatHistory(): Promise<void> {
+    if (!chatSessionId) return;
+    
+    try {
+        const response = await fetch('/api/chat/history');
+        const result = await response.json();
+        
+        if (result.messages) {
+            const chatMessages = document.getElementById('chatMessages');
+            if (chatMessages) {
+                chatMessages.innerHTML = '';
+                result.messages.forEach((msg: any) => {
+                    addMessageToChat(msg.role, msg.content);
+                });
+            }
+        }
+    } catch (error) {
+        console.error('Error loading chat history:', error);
+    }
+}
+
+async function updateCorrelationContext(): Promise<void> {
+    try {
+        const response = await fetch('/api/correlations/top?count=3');
+        const result = await response.json();
+        
+        if (result.correlations) {
+            // displayCorrelations(result.correlations); // TODO: Re-enable this if we want to show correlations in the chat window
+            
+            // Check if correlations have changed
+            if (hasCorrelationsChanged(result.correlations)) {
+                lastCorrelations = result.correlations;
+                showCorrelationNotification();
+            }
+        }
+    } catch (error) {
+        console.error('Error updating correlation context:', error);
+    }
+}
+
+function displayCorrelations(correlations: any[]): void {
+    const correlationList = document.getElementById('correlationList');
+    if (!correlationList) return;
+    
+    if (correlations.length === 0) {
+        correlationList.innerHTML = '<p>No significant correlations found.</p>';
+        return;
+    }
+    
+    const html = correlations.map((corr, index) => `
+        <div class="correlation-item">
+            <strong>${index + 1}. ${corr.variable1} ↔ ${corr.variable2}</strong><br>
+            r = ${corr.correlation}, p = ${corr.p_value} (${corr.strength} ${corr.direction})
+        </div>
+    `).join('');
+    
+    correlationList.innerHTML = html;
+}
+
+function hasCorrelationsChanged(newCorrelations: any[]): boolean {
+    if (lastCorrelations.length !== newCorrelations.length) return true;
+    
+    for (let i = 0; i < newCorrelations.length; i++) {
+        const old = lastCorrelations[i];
+        const new_ = newCorrelations[i];
+        
+        if (!old || 
+            old.variable1 !== new_.variable1 || 
+            old.variable2 !== new_.variable2 ||
+            Math.abs(old.correlation - new_.correlation) > 0.1) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+function showCorrelationNotification(): void {
+    const notification = document.getElementById('correlationChangeNotification');
+    if (notification) {
+        notification.style.display = 'block';
+    }
+}
+
+function hideCorrelationNotification(): void {
+    const notification = document.getElementById('correlationChangeNotification');
+    if (notification) {
+        notification.style.display = 'none';
+    }
+}
+
+function updateCorrelationIndicator(): void {
+    const indicator = document.getElementById('correlationIndicator');
+    if (indicator && lastCorrelations.length > 0) {
+        indicator.textContent = lastCorrelations.length.toString();
+        indicator.style.display = 'inline';
+    } else if (indicator) {
+        indicator.style.display = 'none';
     }
 }

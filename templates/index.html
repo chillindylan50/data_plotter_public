@@ -144,5 +144,60 @@
         <!-- <a href="{{ url_for('index') }}" class="btn"><i class="fas fa-home"></i>Go Home</a> -->
         <a href="https://dylanshah.com" class="btn"><i class="fas fa-home"></i>DylanShah.com</a>
     </div>
+
+    <!-- Chat Interface -->
+    <div id="chatContainer" class="chat-container">
+        <!-- Chat Toggle Button -->
+        <button id="chatToggle" class="chat-toggle">
+            <span id="chatToggleText">💬 Chat with EpsilonAI</span>
+            <span id="correlationIndicator" class="correlation-indicator"></span>
+        </button>
+        
+        <!-- Chat Panel -->
+        <div id="chatPanel" class="chat-panel">
+            <!-- API Key Section -->
+            <div id="apiKeySection" class="api-key-section">
+                <h3>Enter OpenAI API Key</h3>
+                <input type="password" id="apiKeyInput" placeholder="sk-..." class="api-key-input">
+                <button id="initializeChatBtn" class="btn">Initialize Chat</button>
+                <p class="api-key-note">Your API key is stored securely and only used for this session.</p>
+            </div>
+            
+            <!-- Correlation Context Section -->
+            <div id="correlationContext" class="correlation-context" style="display: none;">
+                <!-- <h4>Your main correlated variables are:</h4> -->
+                <!-- <div id="correlationList"></div> -->
+                <div id="correlationChangeNotification" class="correlation-notification" style="display: none;">
+                    <p>📊 Correlations have changed!</p>
+                    <button id="updateContextBtn" class="btn-small">Let EpsilonAI know</button>
+                    <button id="dismissNotificationBtn" class="btn-small">Dismiss</button>
+                </div>
+            </div>
+            
+            <!-- Chat Messages -->
+            <div id="chatMessages" class="chat-messages" style="display: none;"></div>
+            
+            <!-- Chat Input -->
+            <div id="chatInput" class="chat-input" style="display: none;">
+                <input type="text" id="messageInput" placeholder="I can help you understand your data!..." class="message-input">
+                <button id="sendMessageBtn" class="btn-small">Send</button>
+            </div>
+
+            <!-- Chat Controls -->
+            <div id="chatControls" class="chat-controls" style="display: none; margin-top: 6px; text-align: right;">
+                <button id="clearChatBtn" class="btn-small" title="Clear messages from this chat session">Clear Chat</button>
+            </div>
+
+            <!-- Medical Disclaimer Modal -->
+            <div id="disclaimerOverlay" class="modal-overlay" style="display: none;"></div>
+            <div id="disclaimerModal" class="modal" role="dialog" aria-labelledby="disclaimerTitle" aria-modal="true" style="display: none;">
+                <h3 id="disclaimerTitle" style="margin-top: 0;">Important</h3>
+                <p>All content in this chat is informational and not a substitute for professional medical advice.</p>
+                <div style="text-align: right; margin-top: 12px;">
+                    <button id="acknowledgeDisclaimerBtn" class="btn-small">I acknowledge</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
