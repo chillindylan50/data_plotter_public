@@ -1,284 +1,128 @@
-# Database Schema and Models
+# Database Schema
 
 ## Overview
 
-The application uses SQLite with SQLAlchemy ORM for data persistence. The schema supports multi-user data management, chat sessions, and correlation caching.
+SQLite database with SQLAlchemy ORM. Five main tables supporting multi-user data management and chat sessions.
 
-## Database Technology
+## Tables
 
-- **DBMS**: SQLite 3
-- **ORM**: SQLAlchemy 2.0.35
-- **Flask Integration**: Flask-SQLAlchemy 3.1.1
-- **Location**: `instance/user_data.db` (auto-created)
+### 1. Users
+**Purpose**: Store user authentication info
 
-## Entity Relationship Diagram
+**Fields:**
+- id (Primary Key) - Google OAuth user ID
+- email - User's email address
+- created_at, updated_at - Timestamps
 
-```
-┌──────────────┐
-│    User      │
-│──────────────│
-│ id (PK)      │◄────┐
-│ email        │     │
-│ created_at   │     │
-│ updated_at   │     │
-└──────────────┘     │
-                     │
-        ┌────────────┼────────────┬──────────────┐
-        │            │            │              │
-        │            │            │              │
-┌───────▼──────┐ ┌───▼────────┐ ┌▼──────────────┐ ┌──────────────────┐
-│  DataPoint   │ │ChatSession │ │CorrelationResult│ │   ChatMessage   │
-│──────────────│ │────────────│ │──────────────  │ │──────────────────│
-│ id (PK)      │ │ id (PK)    │ │ id (PK)        │ │ id (PK)          │
-│ user_id (FK) │ │ user_id(FK)│ │ user_id (FK)   │ │ session_id (FK) ◄┤
-│ date         │ │ api_key_h. │ │ variable_x     │ │ role             │
-│ data (JSON)  │ │ last_corr. │ │ variable_y     │ │ content          │
-│ created_at   │ │ created_at │ │ correlation    │ │ timestamp        │
-│ updated_at   │ │ updated_at │ │ p_value        │ └──────────────────┘
-└──────────────┘ └────────────┘ │ strength       │
-                                │ direction      │
-                                │ calculated_at  │
-                                └────────────────┘
-```
+**Relationships:**
+- Has many: DataPoints, ChatSessions, CorrelationResults
 
-## Table Definitions
+### 2. DataPoint
+**Purpose**: Store time-series data entries
 
-### Users Table
+**Fields:**
+- id (Auto-increment Primary Key)
+- user_id (Foreign Key → users)
+- date - Data point date
+- data (JSON) - Variable values as JSON
+- created_at, updated_at - Timestamps
 
-Stores user authentication and profile information.
-
-```python
-class User(UserMixin, db.Model):
-    __tablename__ = 'users'
-    
-    id: String(255)              # Google OAuth user ID (Primary Key)
-    email: String(255)           # User's email address (Unique)
-    created_at: DateTime         # Account creation timestamp
-    updated_at: DateTime         # Last update timestamp
-    
-    # Relationships
-    data_points: List[DataPoint]
-    chat_sessions: List[ChatSession]
-    correlation_results: List[CorrelationResult]
-```
-
-**Key Points:**
-- `id` is the Google OAuth `sub` claim (unique user identifier)
-- `email` is stored for display purposes
-- Timestamps are in UTC
-- Cascade delete removes all user data when user is deleted
-
-### DataPoint Table
-
-Stores time-series data points for each user.
-
-```python
-class DataPoint(db.Model):
-    __tablename__ = 'data_points'
-    
-    id: Integer                  # Auto-increment ID (Primary Key)
-    user_id: String(255)         # Foreign Key → users.id
-    date: DateTime               # Data point date (required)
-    data: Text                   # JSON string of variable:value pairs
-    created_at: DateTime         # Record creation timestamp
-    updated_at: DateTime         # Record update timestamp
-```
-
-**Data Field Structure:**
+**Example JSON:**
 ```json
 {
   "Variable_1": 42.5,
   "Variable_2": 38.2,
-  "Sleep_Hours": 7.5,
-  "Mood_Score": 8
+  "Sleep_Hours": 7.5
 }
 ```
 
-**Key Points:**
-- Date is stored as datetime for indexing and queries
-- Variable data stored as JSON for flexibility
-- No schema enforcement on variable names (user-defined)
-- Indexed by `user_id` and `date` for performance
+### 3. ChatSession
+**Purpose**: Store chat session metadata
 
-### ChatSession Table
+**Fields:**
+- id (Auto-increment Primary Key)
+- user_id (Foreign Key → users)
+- api_key_hash - SHA-256 hash of OpenAI key
+- last_correlation_context (JSON) - Recent correlations
+- created_at, updated_at - Timestamps
 
-Stores chat session metadata and context.
+**Relationships:**
+- Has many: ChatMessages
 
-```python
-class ChatSession(db.Model):
-    __tablename__ = 'chat_sessions'
-    
-    id: Integer                  # Auto-increment ID (Primary Key)
-    user_id: String(255)         # Foreign Key → users.id
-    api_key_hash: String(255)    # SHA-256 hash of OpenAI API key
-    last_correlation_context: Text  # JSON of last sent correlations
-    created_at: DateTime         # Session creation timestamp
-    updated_at: DateTime         # Last activity timestamp
-    
-    # Relationships
-    messages: List[ChatMessage]
+### 4. ChatMessage
+**Purpose**: Store individual chat messages
+
+**Fields:**
+- id (Auto-increment Primary Key)
+- session_id (Foreign Key → chat_sessions)
+- role - 'user', 'assistant', or 'system'
+- content (Text) - Message text
+- timestamp - When sent
+
+### 5. CorrelationResult
+**Purpose**: Cache calculated correlations
+
+**Fields:**
+- id (Auto-increment Primary Key)
+- user_id (Foreign Key → users)
+- variable_x, variable_y - Variable names
+- correlation (Float) - Pearson's r (-1 to 1)
+- p_value (Float) - Statistical significance
+- strength - 'weak', 'moderate', 'strong'
+- direction - 'positive' or 'negative'
+- calculated_at - Timestamp
+
+## Relationships
+
+```
+User (1) ← (many) DataPoint
+User (1) ← (many) ChatSession
+User (1) ← (many) CorrelationResult
+ChatSession (1) ← (many) ChatMessage
 ```
 
-**last_correlation_context Format:**
-```json
-[
-  {
-    "variable1": "Variable_1",
-    "variable2": "Variable_2",
-    "correlation": 0.857,
-    "p_value": 0.001,
-    "strength": "strong",
-    "direction": "positive"
-  }
-]
-```
+## Database Operations
 
-**Key Points:**
-- One active session per user (checked by business logic)
-- API key never stored in plaintext (only hash)
-- Context helps AI understand recent analysis
-- Updated whenever user sends chat message
+**User Operations:**
+- ensure_user_exists() - Create if needed
+- load_user() - Get by ID
 
-### ChatMessage Table
+**Data Operations:**
+- load_user_data() - Get all data points
+- save_user_data() - Bulk save/replace
+- add_data_point() - Add single point
+- clear_user_data() - Delete all user data
 
-Stores individual chat messages in conversation history.
+**Correlation Operations:**
+- calculate_correlations() - Compute all pairs
+- get_all_correlations() - Retrieve results
+- get_top_correlations() - Get strongest N
 
-```python
-class ChatMessage(db.Model):
-    __tablename__ = 'chat_messages'
-    
-    id: Integer                  # Auto-increment ID (Primary Key)
-    session_id: Integer          # Foreign Key → chat_sessions.id
-    role: String(20)             # Message sender: 'user', 'assistant', 'system'
-    content: Text                # Message text content
-    timestamp: DateTime          # Message timestamp
-```
+## Data Isolation
 
-**Key Points:**
-- Messages ordered by timestamp for conversation flow
-- `role` field follows OpenAI chat format convention
-- No message editing/deletion (append-only for history)
-- Cascade delete when session is deleted
+Every query filters by `user_id` to ensure users only see their own data. Foreign key constraints enforce referential integrity.
 
-### CorrelationResult Table
+## SvelteKit Migration
 
-Caches calculated correlation results for performance.
+**Database Change: SQLite → PostgreSQL**
+- Better concurrency
+- Production-ready
+- Better performance
 
-```python
-class CorrelationResult(db.Model):
-    __tablename__ = 'correlation_results'
-    
-    id: Integer                  # Auto-increment ID (Primary Key)
-    user_id: String(255)         # Foreign Key → users.id
-    variable_x: String(255)      # First variable name
-    variable_y: String(255)      # Second variable name
-    correlation: Float           # Pearson correlation coefficient (-1 to 1)
-    p_value: Float               # Statistical significance (0 to 1)
-    strength: String(50)         # Classification: weak/moderate/strong
-    direction: String(50)        # 'positive' or 'negative'
-    calculated_at: DateTime      # Calculation timestamp
-```
+**ORM Change: SQLAlchemy → Prisma**
+- TypeScript-native
+- Better type safety
+- Auto-generated client
+- Migration system built-in
 
-**Strength Classification:**
-- `|r| > 0.7`: "strong"
-- `|r| > 0.3`: "moderate"  
-- `|r| > 0.1`: "weak"
-- `|r| ≤ 0.1`: "very weak"
+**Schema Definition (Prisma):**
+- Define models in schema.prisma
+- Relationships with @relation
+- Generate TypeScript types
+- Run migrations with CLI
 
-**Key Points:**
-- Computed for all numeric variable pairs
-- Recalculated when user data changes
-- Indexed by `user_id` for fast retrieval
-- Provides context to chat assistant
-
-## Database Operations (Service Layer)
-
-Located in `database.py`, these functions abstract SQLAlchemy operations:
-
-### User Operations
-- `ensure_user_exists(user_id, email)` - Create user if not exists
-- `load_user(user_id)` - Load user by ID
-
-### Data Operations
-- `load_user_data(user_id)` - Get all data points as list of dicts
-- `save_user_data(user_id, data, reset=False)` - Bulk save/replace data
-- `add_data_point(user_id, data_point)` - Add single data point
-- `clear_user_data(user_id)` - Delete all user's data points
-
-### Correlation Operations
-- `calculate_correlations(user_id)` - Compute and store all correlations
-- `get_all_correlations(user_id, limit=None)` - Retrieve correlations ordered by strength
-- `get_top_correlations(user_id, count=3)` - Get top N strongest correlations
-- `get_correlation_strength(abs_correlation)` - Helper to classify strength
-
-## Migration Considerations for SvelteKit
-
-### Recommended Changes
-
-1. **Switch to PostgreSQL** for better concurrency and production readiness
-2. **Use Prisma or Drizzle ORM** for TypeScript-native database access
-3. **Add composite indexes** on frequently queried fields:
-   - `data_points(user_id, date)`
-   - `correlation_results(user_id, correlation DESC)`
-4. **Consider time-series optimization** for large datasets
-5. **Add data versioning** for audit trail
-6. **Implement soft deletes** for data recovery
-
-### Schema Mapping
-
-| Current (Python/SQLAlchemy) | SvelteKit (Prisma) |
-|----------------------------|-------------------|
-| String(255) | String @db.VarChar(255) |
-| Text | String @db.Text |
-| DateTime | DateTime |
-| Float | Float |
-| Integer | Int @default(autoincrement()) |
-| ForeignKey | Relation with @relation |
-
-### Prisma Schema Example
-
-```prisma
-model User {
-  id        String   @id @db.VarChar(255)
-  email     String   @unique @db.VarChar(255)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  
-  dataPoints         DataPoint[]
-  chatSessions       ChatSession[]
-  correlationResults CorrelationResult[]
-  
-  @@map("users")
-}
-
-model DataPoint {
-  id        Int      @id @default(autoincrement())
-  userId    String   @map("user_id") @db.VarChar(255)
-  date      DateTime
-  data      Json
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@index([userId, date])
-  @@map("data_points")
-}
-
-// ... other models
-```
-
-## Database Initialization
-
-Currently handled by Flask app startup:
-```python
-def create_tables():
-    with app.app_context():
-        db.create_all()
-```
-
-For SvelteKit, use Prisma migrations:
-```bash
-npx prisma migrate dev --name init
-npx prisma generate
-```
+**Benefits:**
+- Type-safe database access
+- No manual SQL
+- Automatic migrations
+- Better developer experience
