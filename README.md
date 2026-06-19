@@ -1,7 +1,8 @@
 # Data Table Plotter
 
-Note: this version was made using Windsurf, as a first example web app I built. REPLACED by DocrtorSpeak, which the source is not public (yet). https://doctorspeak.vercel.app/landing.html
-An interactive web application for data visualization and statistical analysis. Create, edit, and visualize data tables with real-time plotting and correlation analysis capabilities.
+Note: REPLACED by DoctorSpeak, which does not currently have public source code: https://doctorspeak.vercel.app/landing.html   This version was made using early 2025 Windsurf, as a first example web app I built.
+
+It's An interactive web application for data visualization and statistical analysis. Create, edit, and visualize data tables with real-time plotting and correlation analysis capabilities.
 
 ## Features
 
