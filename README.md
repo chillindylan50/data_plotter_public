@@ -1,6 +1,7 @@
 # Data Table Plotter
 
-An interactive web application for data visualization and statistical analysis. Create, edit, and visualize data tables with real-time plotting and correlation analysis capabilities. Note: this version was made using Windsurf, as a first example web app I built. It's running live at dylanshah.com/epsilon. Hopefully with no security leaks :smile:.
+Note: this version was made using Windsurf, as a first example web app I built. REPLACED by DocrtorSpeak, which the source is not public (yet). https://doctorspeak.vercel.app/landing.html
+An interactive web application for data visualization and statistical analysis. Create, edit, and visualize data tables with real-time plotting and correlation analysis capabilities.
 
 ## Features
 
